@@ -140,6 +140,8 @@ type CreateDraftEnvelopeInput = {
 };
 
 type SendDraftEnvelopeInput = {
+  /** The API key that sent it, recorded in the audit trail. */
+  apiKeyId?: string | null;
   /** How many days signers get. The default applies when left out. */
   expiresInDays?: number;
   /** Days between automatic reminders. Null or left out means none. */
@@ -2598,6 +2600,7 @@ export async function sendDraftEnvelope(
           event: "sent",
           ipAddress: input.ipAddress ?? null,
           metadata: {
+            ...(input.apiKeyId ? { apiKeyId: input.apiKeyId } : {}),
             // The send route refuses a send without this confirmation.
             expiresAt,
             reminderIntervalDays: input.reminderIntervalDays ?? null,

@@ -1,7 +1,8 @@
 # The SignuDoc API
 
-Another app can use SignuDoc through its API: check a key works now, and
-create, send and track envelopes as the next releases add those endpoints.
+Another app can use SignuDoc through its API: create an envelope from a
+PDF, send it, follow it, and download the signed PDF and the certificate of
+completion.
 Everything here runs inside your own install; nothing goes through a
 service of ours.
 
@@ -87,12 +88,173 @@ stands:
 - `RateLimit-Remaining`: requests left in it.
 - `RateLimit-Reset`: seconds until the window starts again.
 
-The limits the web app has on creating and sending envelopes apply to keys
-too. An address that sends 30 bad keys in 10 minutes is turned away until
-the 10 minutes are up.
+On top of that, each key may create 60 envelopes in 10 minutes and send 100
+in an hour, counting creates and template calls that also send. Your email
+provider's own limits usually bite first: Resend's free plan sends 100
+emails a day. An address that sends 30 bad keys in 10 minutes is turned
+away until the 10 minutes are up.
+
+## A first envelope in one call
+
+Upload the PDF, name the signers, place the fields, and send, all at once.
+`data` is the envelope as JSON:
+
+```sh
+curl https://sign.example.com/api/v1/envelopes \
+  -H "Authorization: Bearer sdk_…" \
+  -H "Idempotency-Key: order-1042" \
+  -F file=@agreement.pdf \
+  -F 'data={
+    "title": "Service agreement",
+    "signers": [
+      { "ref": "client", "name": "Casey Client", "email": "casey@example.com" }
+    ],
+    "fields": [
+      { "signer": "client", "type": "signature", "page": 1,
+        "x": 0.1, "y": 0.8, "width": 0.3, "height": 0.05 },
+      { "signer": "client", "type": "date", "page": 1,
+        "x": 0.5, "y": 0.8, "width": 0.2, "height": 0.03 }
+    ],
+    "metadata": { "invoice": "INV-1042" },
+    "send": { "expiresInDays": 14, "permittedUseConfirmed": true }
+  }'
+```
+
+The answer is the envelope (see [The envelope](#the-envelope)), with status
+`sent`, and the first signer has their invitation email. Leave out `send` to
+make a draft and send it later with `POST /api/v1/envelopes/{id}/send`.
+
+Things to know:
+
+- **Signers** sign in the order given. Each has a `ref`, your own name for
+  them (letters, digits, `.`, `_`, `:` and `-`), which fields use to say whose
+  they are and which comes back with the signer. Up to 10 signers, and up to
+  10 `copyRecipients` (`name`, `email`) who get the finished document.
+  `accessCode` and `requireEmailCode: true` add the same extra checks the web
+  app offers.
+- **Fields** are placed on a page by fractions of its width and height from
+  its top left corner: `"x": 0.1, "y": 0.8` is 10% in from the left and 80%
+  down. Types: `signature`, `initials`, `date`, `text`, `checkbox`, `number`,
+  `dropdown` (with `options`), `radio` (buttons with one `groupId` are one
+  question). `required` is true unless set to false. Every signer needs at
+  least one `signature` field.
+- **Sending** needs `"permittedUseConfirmed": true`: your app confirms, as the
+  web app's send button asks a person to, that the envelope is an ordinary
+  business agreement and not one of the kinds of document that the law does
+  not let be signed electronically (see `/electronic-signatures` on your
+  install). `expiresInDays` (1 to 365) and `reminderIntervalDays` (1 to 30)
+  are as in the web app, and `signatureLevel` is `advanced` or `qualified` on
+  installs with a signing provider.
+- **All or nothing.** If anything about the request is wrong, a field off
+  its page or a signer without a signature field, nothing is kept: no
+  half-made draft is left behind.
+- **`metadata`** is up to 2 KB of JSON of your own, returned with the
+  envelope, for matching it to your records.
+- **`Idempotency-Key`** makes a retry safe. A request with a key SignuDoc has
+  seen in the last 24 hours gets the first answer again (with the header
+  `Idempotent-Replayed: true`) instead of making a second envelope. The same
+  key with a different request is refused with 422. If the install fails
+  after the envelope was made, a retry with the same key gets that envelope
+  rather than a second one. Use one key per thing you mean to send, such as
+  the invoice number.
+
+### PDFs over 4 MB
+
+On Vercel a request to the app can carry at most 4.5 MB, so a bigger PDF (up
+to 20 MB) goes straight to storage first:
+
+```sh
+curl -X POST https://sign.example.com/api/v1/uploads -H "Authorization: Bearer sdk_…"
+# {"uploadId": "…", "url": "https://…", "method": "PUT",
+#  "headers": {"content-type": "application/pdf"}, "expiresAt": "…"}
+
+curl -X PUT "<url>" -H "content-type: application/pdf" --data-binary @big.pdf
+```
+
+Then create the envelope with JSON instead of a form, naming the upload:
+
+```sh
+curl https://sign.example.com/api/v1/envelopes \
+  -H "Authorization: Bearer sdk_…" -H "content-type: application/json" \
+  -d '{ "uploadId": "…", "filename": "big.pdf", "title": "…", "signers": […], "fields": […] }'
+```
+
+The upload URL works for 10 minutes, and an upload that is never used is
+deleted after a day. Installs that keep files on their own disk (not on
+Vercel) do not need this and answer 404: send any size in the form.
+
+## The envelope
+
+Every endpoint that returns an envelope returns the same object:
+
+```json
+{
+  "object": "envelope",
+  "id": "8c1d…",
+  "title": "Service agreement",
+  "status": "sent",
+  "expired": false,
+  "createdAt": "2026-11-17T09:00:00.000Z",
+  "sentAt": "2026-11-17T09:00:01.000Z",
+  "completedAt": null,
+  "declinedAt": null,
+  "voidedAt": null,
+  "expiresAt": "2026-12-01T09:00:01.000Z",
+  "pageCount": 2,
+  "signatureLevel": "simple",
+  "metadata": { "invoice": "INV-1042" },
+  "signers": [
+    {
+      "id": "51ab…",
+      "ref": "client",
+      "name": "Casey Client",
+      "email": "casey@example.com",
+      "order": 1,
+      "status": "notified",
+      "viewedAt": null,
+      "signedAt": null,
+      "declinedAt": null,
+      "declineReason": null
+    }
+  ],
+  "copyRecipients": [],
+  "files": { "signed": null, "certificate": null }
+}
+```
+
+- `status` is `draft`, `sent`, `completed`, `declined` or `voided`. A sent
+  envelope past its deadline has `expired: true` until it is voided or the
+  deadline moves.
+- A signer's `status` is `pending` (not their turn yet), `notified` (their
+  turn, invited), `signed` or `declined`. `viewedAt` is when they first
+  opened it.
+- `files` gives the paths to download once there is something to download:
+  the signed PDF once the envelope is completed, and the certificate of
+  completion once it is completed, declined or voided.
+
+To know when something happens without asking again and again, use
+webhooks (coming in the next release).
 
 ## Endpoints
 
-| Method and path  | Access | What it does                           |
-| ---------------- | ------ | -------------------------------------- |
-| `GET /api/v1/me` | read   | Which key this is and whom it acts as. |
+| Method and path                                | Access | What it does                                                                                                                                                |
+| ---------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/me`                               | read   | Which key this is and whom it acts as.                                                                                                                      |
+| `POST /api/v1/envelopes`                       | write  | Creates an envelope, and sends it if asked.                                                                                                                 |
+| `GET /api/v1/envelopes`                        | read   | Lists envelopes, newest first: `?status=`, `?limit=` (up to 100, 25 by default), and `?cursor=` with the `nextCursor` of the page before.                   |
+| `GET /api/v1/envelopes/{id}`                   | read   | One envelope.                                                                                                                                               |
+| `POST /api/v1/envelopes/{id}/send`             | write  | Sends a draft. Body: the `send` options above.                                                                                                              |
+| `POST /api/v1/envelopes/{id}/void`             | write  | Voids a sent envelope. Body: `{"reason": "…"}`, required on Part 11 installs.                                                                               |
+| `POST /api/v1/envelopes/{id}/remind`           | write  | Emails the signer whose turn it is a reminder, at most once a day as in the web app.                                                                        |
+| `DELETE /api/v1/envelopes/{id}`                | write  | Deletes a draft.                                                                                                                                            |
+| `GET /api/v1/envelopes/{id}/events`            | read   | The audit trail, oldest first.                                                                                                                              |
+| `GET /api/v1/envelopes/{id}/files/signed`      | read   | The signed PDF.                                                                                                                                             |
+| `GET /api/v1/envelopes/{id}/files/certificate` | read   | The certificate of completion.                                                                                                                              |
+| `POST /api/v1/uploads`                         | write  | An upload URL for a PDF over 4 MB.                                                                                                                          |
+| `GET /api/v1/templates`                        | read   | Saved templates, with their roles in signing order.                                                                                                         |
+| `POST /api/v1/templates/{id}/envelopes`        | write  | An envelope from a template: `title`, `signers` (`name`, `email`, one per role in order), and optionally `metadata` and `send`. Takes an `Idempotency-Key`. |
+| `GET /api/v1/openapi.json`                     | none   | The OpenAPI 3.1 description of all of this, for code generators and API tools.                                                                              |
+
+Envelopes made through the API are ordinary envelopes: they show in the key's
+administrator's documents, can be followed and voided there, and their audit
+trail records the key that sent them.

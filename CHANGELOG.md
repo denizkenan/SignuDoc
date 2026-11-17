@@ -16,9 +16,15 @@ release says when it does.
   be read-only, can expire, and stop working when revoked or when their
   administrator stops being one. `GET /api/v1/me` checks a key works. See
   [docs/api.md](docs/api.md).
+- API endpoints under `/api/v1`: create an envelope from a PDF with its
+  signers, copy recipients and fields, and send it, in one call (all or
+  nothing, safe to retry with an `Idempotency-Key`); send, void, remind and
+  delete; list and read envelopes and their audit trail; download the signed
+  PDF and the certificate; start an envelope from a template; upload PDFs
+  over 4 MB straight to Blob. `GET /api/v1/openapi.json` describes it all.
 
-This changes the database: the new `api_keys` table is added by the
-migration that runs on deploy.
+This changes the database: the new `api_keys` and `api_idempotency` tables
+and three new columns are added by the migrations that run on deploy.
 
 ## [0.3.0] - 2026-11-16
 

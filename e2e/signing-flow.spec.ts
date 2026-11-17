@@ -1216,8 +1216,9 @@ test("a signer signs with a qualified signature in their own name, through the s
   });
 });
 
-test("an administrator makes an API key, the API accepts it, and revoking it stops it", async ({
+test("an administrator makes an API key, an app sends and downloads an envelope with it, and revoking it stops it", async ({
   baseURL,
+  browser,
   page,
   playwright,
 }) => {
@@ -1282,6 +1283,173 @@ test("an administrator makes an API key, the API accepts it, and revoking it sto
     expect(await anonymous.json()).toMatchObject({
       error: { code: "unauthorized" },
     });
+  });
+
+  await test.step("an app creates and sends an envelope, a signer signs, and the app downloads it", async () => {
+    const auth = { authorization: `Bearer ${key}` };
+    const signerEmail = `api-signer+${String(Date.now())}@example.com`;
+    const pdfPath = await writeSamplePdf(
+      test.info().outputPath("api-agreement.pdf"),
+    );
+    const { readFile } = await import("node:fs/promises");
+    const data = {
+      fields: [
+        {
+          height: 0.05,
+          page: 1,
+          signer: "client",
+          type: "signature",
+          width: 0.3,
+          x: 0.1,
+          y: 0.7,
+        },
+      ],
+      metadata: { invoice: "INV-1042" },
+      send: { expiresInDays: 7, permittedUseConfirmed: true },
+      signers: [{ email: signerEmail, name: "Casey Client", ref: "client" }],
+      title: "API service agreement",
+    };
+    const created = await api.post("/api/v1/envelopes", {
+      headers: { ...auth, "idempotency-key": "order-1042" },
+      multipart: {
+        data: JSON.stringify(data),
+        file: {
+          buffer: await readFile(pdfPath),
+          mimeType: "application/pdf",
+          name: "agreement.pdf",
+        },
+      },
+    });
+
+    expect(created.status()).toBe(201);
+
+    const envelope = (await created.json()) as {
+      id: string;
+      metadata: unknown;
+      signers: Array<{ ref: string; status: string }>;
+      status: string;
+    };
+
+    expect(envelope).toMatchObject({
+      metadata: { invoice: "INV-1042" },
+      signers: [{ ref: "client", status: "notified" }],
+      status: "sent",
+    });
+
+    // The same request again is the same envelope, not a second one.
+    const retried = await api.post("/api/v1/envelopes", {
+      headers: { ...auth, "idempotency-key": "order-1042" },
+      multipart: {
+        data: JSON.stringify(data),
+        file: {
+          buffer: await readFile(pdfPath),
+          mimeType: "application/pdf",
+          name: "agreement.pdf",
+        },
+      },
+    });
+
+    expect(retried.headers()["idempotent-replayed"]).toBe("true");
+    expect(((await retried.json()) as { id: string }).id).toBe(envelope.id);
+
+    const invitation = await waitForEmail({
+      template: "signing_invitation",
+      to: signerEmail,
+    });
+    const signer = await browser.newContext();
+    const signerPage = await signer.newPage();
+
+    await signerPage.goto(extractLink(invitation.text, "/sign/"));
+
+    const consent = signerPage.getByRole("dialog", { name: "Before you sign" });
+
+    await consent
+      .getByRole("checkbox", {
+        name: "I agree to use electronic records and signatures",
+      })
+      .check();
+    await consent.getByRole("button", { name: "Agree and continue" }).click();
+    await signerPage
+      .getByRole("button", { exact: true, name: "Signature" })
+      .click();
+    await signerPage
+      .getByRole("dialog", { name: "Add your signature" })
+      .getByRole("button", { name: "Apply signature" })
+      .click();
+    await signerPage.getByRole("button", { name: "Finish" }).click();
+    await signerPage
+      .getByRole("dialog", { name: "Finish signing?" })
+      .getByRole("button", { name: "Finish signing" })
+      .click();
+    await expect(signerPage).toHaveURL(/\/sign\/[^/]+\/done/);
+    await signer.close();
+
+    // A cut-off body, or JSON that is not an object, is refused, never
+    // read as "no reason given". Sent as bytes: Playwright would turn a
+    // string that is not JSON into a JSON string.
+    for (const data of [Buffer.from('{"reason":'), Buffer.from('"stop"')]) {
+      const refused = await api.post(`/api/v1/envelopes/${envelope.id}/void`, {
+        data,
+        headers: { ...auth, "content-type": "application/json" },
+      });
+
+      expect(refused.status(), await refused.text()).toBe(400);
+    }
+
+    const finished = await api.get(`/api/v1/envelopes/${envelope.id}`, {
+      headers: auth,
+    });
+
+    expect(await finished.json()).toMatchObject({
+      files: {
+        certificate: `/api/v1/envelopes/${envelope.id}/files/certificate`,
+        signed: `/api/v1/envelopes/${envelope.id}/files/signed`,
+      },
+      signers: [{ status: "signed" }],
+      status: "completed",
+    });
+
+    for (const file of ["signed", "certificate"]) {
+      const download = await api.get(
+        `/api/v1/envelopes/${envelope.id}/files/${file}`,
+        { headers: auth },
+      );
+
+      expect(download.status()).toBe(200);
+      expect(download.headers()["content-type"]).toContain("application/pdf");
+      expect((await download.body()).subarray(0, 5).toString()).toBe("%PDF-");
+    }
+
+    const events = (await (
+      await api.get(`/api/v1/envelopes/${envelope.id}/events`, {
+        headers: auth,
+      })
+    ).json()) as { data: Array<{ event: string }> };
+
+    expect(events.data.map((event) => event.event)).toEqual(
+      expect.arrayContaining([
+        "created",
+        "sent",
+        "viewed",
+        "signed",
+        "completed",
+      ]),
+    );
+
+    const list = (await (
+      await api.get("/api/v1/envelopes?status=completed&limit=5", {
+        headers: auth,
+      })
+    ).json()) as { data: Array<{ id: string }> };
+
+    expect(list.data.map((item) => item.id)).toContain(envelope.id);
+
+    const openapi = await api.get("/api/v1/openapi.json");
+
+    expect(openapi.status()).toBe(200);
+    expect(((await openapi.json()) as { openapi: string }).openapi).toBe(
+      "3.1.0",
+    );
   });
 
   await test.step("a revoked key is refused at once", async () => {
