@@ -66,8 +66,8 @@ Tests use disposable local PostgreSQL and captured email, so the live Xata datab
 
 - Production Next.js build and AMD64 container build passed.
 - Typecheck and lint passed; lint retains seven upstream warnings.
-- All 324 unit-test cases passed across compatible Linux runs. The updater's 13 shell-workflow cases were rerun on modern Git/Bash with `jq`; macOS Bash 3.2 and Debian Bookworm's older Git cannot run that workflow.
-- All 185 database tests and six Playwright browser tests passed against disposable local PostgreSQL, including the complete signing flow.
+- All 350 unit tests passed on Node.js 24 in GitHub CI, including the shell-workflow cases that need modern Git, Bash and `jq`.
+- All 233 database tests and eight Playwright browser tests passed against disposable PostgreSQL, including API sending, signed webhooks, key revocation and cross-site embedded signing.
 - The production runtime image served the setup form with a 1 GiB memory limit locally.
 - Live setup returned HTTP 200, rendered in Chromium with no page errors, and required a setup token. Unauthenticated envelope creation and retention requests returned HTTP 401.
 - A temporary object was written to R2, downloaded and compared byte-for-byte, then deleted.
@@ -80,3 +80,5 @@ This fork includes PR #44 (`bae672e`), #45 (`1e041f3`), #46 (`2f645b7`) and #48 
 The API upload flow works with private R2. It issues a ten-minute signed capability for one upload path and bounds the streamed body at 20 MiB. A repeated PUT preserves the first file. A bucket lifecycle rule expires unused `uploads/` objects after one day. Envelope files under `users/` are unaffected.
 
 Initial webhook delivery runs through Next.js `after()`. Each drain reports the next pending attempt or lease expiry to a token-protected internal Worker gateway. The Durable Object persists an alarm, starts the container only when needed, and calls `/api/internal/webhooks` with the job secret. The daily cron also drains the outbox as a recovery path. This preserves Xata scale-to-zero between actual work. Query strings are redacted from Worker logs to protect signed upload and signing links.
+
+The Cloudflare runtime test also verifies image-change restarts, authenticated retry scheduling, persistence across Durable Object eviction and one-shot alarm delivery. Live API verification exercised a 5.25 MB R2 upload, read-only scope enforcement, idempotent draft creation, retrieval, deletion and key revocation. Existing application records were preserved; the temporary test credentials were revoked.

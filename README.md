@@ -143,18 +143,18 @@ DocuSign does more, and charges for it per user. SignuDoc does the everyday sign
 
 ### Where DocuSign does more
 
-|                                                         | SignuDoc                                                          | DocuSign eSignature                                   |
-| ------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------- |
-| **More than one document per envelope, and Word files** | — PDF only, one per envelope                                      | ✅                                                    |
-| **Signing at the same time**                            | — in order only                                                   | ✅                                                    |
-| **Bulk send, web forms, payments**                      | —                                                                 | ✅ on Business Pro                                    |
-| **API and webhooks**                                    | — not yet                                                         | ✅ API plans from $50 a month                         |
-| **Integrations**                                        | —                                                                 | ✅ 1,000+, including Salesforce, Microsoft and Google |
-| **Languages**                                           | — signing pages in English                                        | ✅ signing in 44 languages                            |
-| **Single sign-on**                                      | — email and password                                              | ✅ SAML SSO on Enhanced                               |
-| **Advanced and qualified signatures (eIDAS)**           | With a provider you add: eID Easy or a CSC remote signing service | ✅                                                    |
-| **HIPAA, 21 CFR Part 11, certifications**               | Part 11 mode; you validate                                        | ✅ on Enhanced or as add-ons                          |
-| **Support**                                             | GitHub issues                                                     | ✅ 24/7 on Enhanced                                   |
+|                                                         | SignuDoc                                                                          | DocuSign eSignature                                   |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| **More than one document per envelope, and Word files** | — PDF only, one per envelope                                                      | ✅                                                    |
+| **Signing at the same time**                            | — in order only                                                                   | ✅                                                    |
+| **Bulk send, web forms, payments**                      | —                                                                                 | ✅ on Business Pro                                    |
+| **API and webhooks**                                    | ✅ API keys, REST API, signed webhooks and embedded signing ([docs](docs/api.md)) | ✅ API plans from $50 a month                         |
+| **Integrations**                                        | —                                                                                 | ✅ 1,000+, including Salesforce, Microsoft and Google |
+| **Languages**                                           | — signing pages in English                                                        | ✅ signing in 44 languages                            |
+| **Single sign-on**                                      | — email and password                                                              | ✅ SAML SSO on Enhanced                               |
+| **Advanced and qualified signatures (eIDAS)**           | With a provider you add: eID Easy or a CSC remote signing service                 | ✅                                                    |
+| **HIPAA, 21 CFR Part 11, certifications**               | Part 11 mode; you validate                                                        | ✅ on Enhanced or as add-ons                          |
+| **Support**                                             | GitHub issues                                                                     | ✅ 24/7 on Enhanced                                   |
 
 If your agreements run through Salesforce, need SMS checks or ID document checks, or go out by the thousand in bulk, DocuSign earns its price. If you want to send everyday agreements, keep the evidence, and own the whole thing, SignuDoc is built for you.
 
