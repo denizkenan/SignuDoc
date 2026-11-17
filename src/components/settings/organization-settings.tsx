@@ -6,6 +6,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
 import { BrandingPanel } from "@/components/settings/branding-panel";
+import { EmbeddingPanel } from "@/components/settings/embedding-panel";
 import { Part11Panel } from "@/components/settings/part11-panel";
 import { PeoplePanel } from "@/components/settings/people-panel";
 import { SecurityPanel } from "@/components/settings/security-panel";
@@ -418,6 +419,8 @@ export function OrganizationSettings({
         {!values.hosted ? <ApiKeysPanel /> : null}
 
         {!values.hosted ? <WebhooksPanel /> : null}
+
+        {!values.hosted ? <EmbeddingPanel /> : null}
 
         <SignerDataPanel />
       </div>

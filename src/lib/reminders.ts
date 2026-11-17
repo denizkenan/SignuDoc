@@ -24,6 +24,7 @@ import {
 } from "./services/audit.ts";
 import { createEmailService, type EmailService } from "./services/email.ts";
 import { buildDeadlineLine } from "./services/signing-invitation-email.ts";
+import { isEmbeddedEnvelope } from "./embedding.ts";
 import { withUserEmailLegalFooter } from "./services/email-legal-footer.ts";
 import {
   formatReminderAvailableAt,
@@ -37,6 +38,7 @@ import {
 import { escapeHtml } from "./utils/html.ts";
 
 type ReminderEnvelopeRow = {
+  delivery: "email" | "embedded";
   expiresAt: number | null;
   id: string;
   ownerEmail: string;
@@ -156,6 +158,7 @@ async function getReminderEnvelope(
         e.user_id AS "userId",
         e.title,
         e.status,
+        e.delivery,
         e.expires_at AS "expiresAt",
         e.reminder_interval_days AS "reminderIntervalDays",
         e.updated_at AS "updatedAt",
@@ -339,6 +342,16 @@ async function persistReminder(
     if (persistedEnvelope.status !== "sent") {
       throw new ReminderMutationError(
         "Only sent envelopes can receive reminders.",
+        409,
+      );
+    }
+
+    // Checked again under the lock: the envelope may have been sent for
+    // another app to sign since the early check, and a reminder would
+    // retire the link that app holds.
+    if (persistedEnvelope.delivery === "embedded") {
+      throw new ReminderMutationError(
+        "This envelope is signed in another app, so SignuDoc does not email its signers.",
         409,
       );
     }
@@ -618,6 +631,15 @@ export async function sendManualEnvelopeNudge(
     nowUnixTimestamp = Math.floor(Date.now() / 1000),
   }: SendReminderOptions = {},
 ) {
+  // Its signers sign in another app, which reminds them itself. A reminder
+  // would also retire the link that app holds.
+  if (await isEmbeddedEnvelope(envelopeId, database, userId)) {
+    throw new ReminderMutationError(
+      "This envelope is signed in another app, so SignuDoc does not email its signers.",
+      409,
+    );
+  }
+
   const persisted = await persistReminder(
     envelopeId,
     { ...input, kind: "manual", userId },
@@ -658,6 +680,10 @@ export async function sendAutomaticEnvelopeReminder(
     nowUnixTimestamp = Math.floor(Date.now() / 1000),
   }: SendReminderOptions = {},
 ): Promise<boolean> {
+  if (await isEmbeddedEnvelope(envelopeId, database)) {
+    return false;
+  }
+
   let persisted: PersistedReminder;
 
   try {

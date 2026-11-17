@@ -1,9 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import pg from "pg";
 
-import { e2eDatabaseUrl, e2eSetupToken } from "../playwright.config";
+import {
+  e2eDatabaseUrl,
+  e2eOutboxDir,
+  e2eSetupToken,
+} from "../playwright.config";
 import { extractLink, extractLinks, waitForEmail } from "./support/outbox";
 import { totpCode } from "./support/totp";
+import { startEmbedParent } from "./support/embed-parent";
 import { writeSamplePdf } from "./support/sample-pdf";
 import {
   hasValidSignature,
@@ -1550,6 +1555,264 @@ test("an administrator makes an API key and a webhook, an app sends and download
 
   await api.dispose();
   await receiver.close();
+});
+
+test("an app shows the signing page in its own site, only on a site an administrator allowed, and hears that it was signed", async ({
+  baseURL,
+  browser,
+  page,
+  playwright,
+}) => {
+  const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+  let adminEmail = "";
+
+  await database.connect();
+
+  try {
+    adminEmail =
+      (
+        await database.query<{ email: string }>(
+          `select email from public."user" where role = 'admin' order by "createdAt" limit 1`,
+        )
+      ).rows[0]?.email ?? "";
+  } finally {
+    await database.end();
+  }
+
+  expect(adminEmail).not.toBe("");
+
+  const api = await playwright.request.newContext({ baseURL });
+  const portal = await startEmbedParent();
+  const stranger = await startEmbedParent();
+  let key = "";
+
+  await test.step("an administrator makes a key and allows the app's site", async () => {
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(adminEmail);
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await page.goto("/settings");
+    await page.getByPlaceholder("For example: Billing app").fill("Portal");
+    await page.getByRole("button", { name: "Create key" }).click();
+    key =
+      (await page.getByTestId("new-api-key").locator("code").textContent()) ??
+      "";
+    expect(key).toMatch(/^sdk_/);
+    await page.getByRole("button", { name: "Done" }).click();
+
+    await page
+      .getByPlaceholder("https://app.example.com", { exact: true })
+      .fill(portal.origin);
+    await page.getByRole("button", { name: "Allow site" }).click();
+    await expect(
+      page
+        .getByRole("list", { name: "Sites allowed to embed signing" })
+        .getByText(portal.origin),
+    ).toBeVisible();
+  });
+
+  const auth = () => ({ authorization: `Bearer ${key}` });
+  const signerEmail = `embedded-signer+${String(Date.now())}@example.com`;
+  let envelopeId = "";
+  let signerId = "";
+
+  await test.step("the app sends an envelope for embedded signing, and no email goes out", async () => {
+    const pdfPath = await writeSamplePdf(
+      test.info().outputPath("embedded-agreement.pdf"),
+    );
+    const { readFile } = await import("node:fs/promises");
+    const created = await api.post("/api/v1/envelopes", {
+      headers: auth(),
+      multipart: {
+        data: JSON.stringify({
+          fields: [
+            {
+              height: 0.05,
+              page: 1,
+              signer: "client",
+              type: "signature",
+              width: 0.3,
+              x: 0.1,
+              y: 0.7,
+            },
+          ],
+          send: { delivery: "embedded", permittedUseConfirmed: true },
+          signers: [
+            { email: signerEmail, name: "Robin Portal", ref: "client" },
+          ],
+          title: "Portal service agreement",
+        }),
+        file: {
+          buffer: await readFile(pdfPath),
+          mimeType: "application/pdf",
+          name: "agreement.pdf",
+        },
+      },
+    });
+
+    expect(created.status()).toBe(201);
+
+    const envelope = (await created.json()) as {
+      delivery: string;
+      id: string;
+      signers: Array<{ id: string; status: string }>;
+      status: string;
+    };
+
+    expect(envelope).toMatchObject({
+      delivery: "embedded",
+      signers: [{ status: "notified" }],
+      status: "sent",
+    });
+    envelopeId = envelope.id;
+    signerId = envelope.signers[0]!.id;
+  });
+
+  let link = "";
+
+  await test.step("a signing link is made only for an allowed site", async () => {
+    const path = `/api/v1/envelopes/${envelopeId}/signers/${signerId}/embed-link`;
+    const refused = await api.post(path, {
+      data: { origin: stranger.origin },
+      headers: auth(),
+    });
+
+    expect(refused.status()).toBe(403);
+
+    const made = await api.post(path, {
+      data: { origin: portal.origin },
+      headers: auth(),
+    });
+
+    expect(made.status()).toBe(201);
+
+    const body = (await made.json()) as { object: string; url: string };
+
+    expect(body.object).toBe("embed_link");
+    link = body.url;
+    expect(new URL(link).searchParams.get("origin")).toBe(portal.origin);
+  });
+
+  await test.step("another site cannot frame that link", async () => {
+    const strangerPage = await page.context().newPage();
+    const refusals: string[] = [];
+
+    strangerPage.on("console", (message) => {
+      if (/frame-ancestors/.test(message.text())) {
+        refusals.push(message.text());
+      }
+    });
+    await strangerPage.goto(stranger.pageFor(link));
+    await expect.poll(() => refusals.length).toBeGreaterThan(0);
+    await expect(
+      strangerPage
+        .frameLocator("#signing")
+        .getByRole("dialog", { name: "Before you sign" }),
+    ).toHaveCount(0);
+    await strangerPage.close();
+  });
+
+  await test.step("the signer signs inside the app's page, and the app is told", async () => {
+    const context = await browser.newContext();
+    const portalPage = await context.newPage();
+
+    await portalPage.goto(portal.pageFor(link));
+
+    const frame = portalPage.frameLocator("#signing");
+    const consent = frame.getByRole("dialog", { name: "Before you sign" });
+
+    await consent
+      .getByRole("checkbox", {
+        name: "I agree to use electronic records and signatures",
+      })
+      .check();
+    await consent.getByRole("button", { name: "Agree and continue" }).click();
+    await frame.getByRole("button", { exact: true, name: "Signature" }).click();
+    await frame
+      .getByRole("dialog", { name: "Add your signature" })
+      .getByRole("button", { name: "Apply signature" })
+      .click();
+    await frame.getByRole("button", { name: "Finish" }).click();
+    await frame
+      .getByRole("dialog", { name: "Finish signing?" })
+      .getByRole("button", { name: "Finish signing" })
+      .click();
+
+    await expect
+      .poll(() =>
+        portalPage.evaluate(() =>
+          (
+            window as unknown as {
+              signudocMessages: Array<{ data: { type?: string } }>;
+            }
+          ).signudocMessages.map((message) => message.data.type),
+        ),
+      )
+      .toContain("signudoc:signed");
+
+    const messages = await portalPage.evaluate(
+      () =>
+        (
+          window as unknown as {
+            signudocMessages: Array<{ data: unknown; origin: string }>;
+          }
+        ).signudocMessages,
+    );
+
+    expect(
+      messages.find(
+        (message) =>
+          (message.data as { type?: string }).type === "signudoc:signed",
+      ),
+    ).toMatchObject({
+      data: { envelopeId, signerId, type: "signudoc:signed" },
+      origin: new URL(baseURL!).origin,
+    });
+    // The frame moves on to the embedded done page, still inside the app.
+    await expect
+      .poll(() =>
+        portalPage
+          .frames()
+          .some((child) => /\/embed\/sign\/[^/]+\/done/.test(child.url())),
+      )
+      .toBe(true);
+    await context.close();
+  });
+
+  await test.step("the envelope is completed, and the signer was never emailed an invitation", async () => {
+    await expect
+      .poll(async () => {
+        const response = await api.get(`/api/v1/envelopes/${envelopeId}`, {
+          headers: auth(),
+        });
+
+        return ((await response.json()) as { status: string }).status;
+      })
+      .toBe("completed");
+
+    const { readdir, readFile } = await import("node:fs/promises");
+    const invitations: string[] = [];
+
+    for (const file of await readdir(e2eOutboxDir)) {
+      const message = JSON.parse(
+        await readFile(`${e2eOutboxDir}/${file}`, "utf8"),
+      ) as { template?: string; to?: string | string[] };
+
+      if (
+        message.template === "signing_invitation" &&
+        [message.to].flat().includes(signerEmail)
+      ) {
+        invitations.push(file);
+      }
+    }
+
+    expect(invitations).toEqual([]);
+  });
+
+  await api.dispose();
+  await portal.close();
+  await stranger.close();
 });
 
 test("two-step sign-in: an administrator sets it up and requires it of everyone", async ({

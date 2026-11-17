@@ -144,6 +144,7 @@ export function buildOpenApiDocument(serverUrl: string) {
             },
             createdAt: { format: "date-time", type: "string" },
             declinedAt: isoTime,
+            delivery: { enum: ["email", "embedded"], type: "string" },
             expired: { type: "boolean" },
             expiresAt: isoTime,
             files: {
@@ -242,6 +243,13 @@ export function buildOpenApiDocument(serverUrl: string) {
         },
         SendOptions: {
           properties: {
+            delivery: {
+              default: "email",
+              description:
+                "embedded: signers sign inside your app (see POST /envelopes/{id}/signers/{signerId}/embed-link), and no invitations or reminders are emailed.",
+              enum: ["email", "embedded"],
+              type: "string",
+            },
             expiresInDays: { maximum: 365, minimum: 1, type: "integer" },
             permittedUseConfirmed: {
               const: true,
@@ -500,6 +508,46 @@ export function buildOpenApiDocument(serverUrl: string) {
             ...errors,
           },
           summary: "Send a draft",
+        },
+      },
+      "/envelopes/{id}/signers/{signerId}/embed-link": {
+        post: {
+          parameters: [
+            idParameter,
+            {
+              in: "path",
+              name: "signerId",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            content: {
+              "application/json": {
+                schema: {
+                  properties: {
+                    origin: {
+                      description:
+                        "The exact origin of the page that frames the signer, such as https://app.example.com. Must be allowed in Settings.",
+                      type: "string",
+                    },
+                  },
+                  required: ["origin"],
+                  type: "object",
+                },
+              },
+            },
+            required: true,
+          },
+          responses: {
+            "201": {
+              description:
+                "The link to frame (url) and when it stops working if not opened (expiresAt). Each call replaces the signer's last link.",
+            },
+            ...errors,
+          },
+          summary:
+            "Get a signing link to show in a frame, for the signer whose turn it is",
         },
       },
       "/envelopes/{id}/void": {

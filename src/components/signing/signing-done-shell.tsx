@@ -4,10 +4,15 @@ import { PublicLegalFooter } from "@/components/layout/public-legal-links";
 const fallbackEnvelopeTitle = "this document";
 
 type SigningDoneShellProps = {
+  /** Shown inside another app's page, which carries on from here. */
+  embedded?: boolean;
   envelopeTitle?: string | null;
 };
 
-export function SigningDoneShell({ envelopeTitle }: SigningDoneShellProps) {
+export function SigningDoneShell({
+  embedded = false,
+  envelopeTitle,
+}: SigningDoneShellProps) {
   const resolvedEnvelopeTitle =
     envelopeTitle && envelopeTitle.trim().length > 0
       ? envelopeTitle.trim()
@@ -60,9 +65,11 @@ export function SigningDoneShell({ envelopeTitle }: SigningDoneShellProps) {
             You&apos;ll receive an email with the signed document once all
             parties have signed.
           </p>
-          <p className="mt-8 inline-flex rounded-full bg-(--surface) px-4 py-2 text-sm font-semibold text-(--secondary)">
-            You can close this tab.
-          </p>
+          {embedded ? null : (
+            <p className="mt-8 inline-flex rounded-full bg-(--surface) px-4 py-2 text-sm font-semibold text-(--secondary)">
+              You can close this tab.
+            </p>
+          )}
         </section>
       </main>
 

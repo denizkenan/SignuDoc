@@ -124,6 +124,7 @@ import {
 import { PERMITTED_USE_VERSION } from "./permitted-uses.ts";
 import { hashAccessCode } from "./signer-checks.ts";
 import { escapeHtml } from "./utils/html.ts";
+import { hasEmbedOrigins, isEmbeddedEnvelope } from "./embedding.ts";
 import { releaseSentWebhook } from "./webhooks/outbox.ts";
 
 type CreateDraftEnvelopeOptions = {
@@ -143,6 +144,11 @@ type CreateDraftEnvelopeInput = {
 type SendDraftEnvelopeInput = {
   /** The API key that sent it, recorded in the audit trail. */
   apiKeyId?: string | null;
+  /**
+   * "embedded": signers sign inside another app (see embedding.ts), so no
+   * invitations or reminders are emailed. API only. "email" by default.
+   */
+  delivery?: "email" | "embedded";
   /** How many days signers get. The default applies when left out. */
   expiresInDays?: number;
   /** Days between automatic reminders. Null or left out means none. */
@@ -2396,6 +2402,44 @@ export async function sendDraftEnvelope(
     }
   }
 
+  const delivery = input.delivery ?? "email";
+
+  if (delivery === "embedded") {
+    if (part11) {
+      throw new EnvelopeMutationError(
+        "Part 11 envelopes are signed with the signers' own accounts on this install, so they cannot be embedded in another app.",
+        400,
+      );
+    }
+
+    if (signatureLevel !== "simple") {
+      throw new EnvelopeMutationError(
+        "Advanced and qualified signatures send the signer to the signing provider, so they cannot be embedded in another app.",
+        400,
+      );
+    }
+
+    if (!(await hasEmbedOrigins(database))) {
+      throw new EnvelopeMutationError(
+        "Embedded signing is off: no site is allowed to show signing pages. An administrator can add one under Settings, Organization, Embedded signing.",
+        400,
+      );
+    }
+
+    const checks = await listSignerCheckSettings(envelopeId, database);
+
+    if (
+      [...checks.values()].some(
+        (check) => check.hasAccessCode || check.requireEmailCode,
+      )
+    ) {
+      throw new EnvelopeMutationError(
+        "Embedded signers are identified by your app, so leave out access codes and emailed codes.",
+        400,
+      );
+    }
+  }
+
   const part11SignerAccounts = new Map<string, string>();
 
   if (part11) {
@@ -2504,6 +2548,24 @@ export async function sendDraftEnvelope(
         );
       }
 
+      // Access codes and emailed codes are not part of that snapshot, and
+      // an embedded signer has no way to enter one. Checked again here,
+      // under the same lock that a save of the signers takes.
+      if (delivery === "embedded") {
+        const lockedChecks = await listSignerCheckSettings(envelopeId, tx);
+
+        if (
+          [...lockedChecks.values()].some(
+            (check) => check.hasAccessCode || check.requireEmailCode,
+          )
+        ) {
+          throw new EnvelopeMutationError(
+            "Embedded signers are identified by your app, so leave out access codes and emailed codes.",
+            400,
+          );
+        }
+      }
+
       await tx.query(
         `
           UPDATE signers
@@ -2532,6 +2594,13 @@ export async function sendDraftEnvelope(
             WHERE id = $3
           `,
           [signatureLevel, signingProvider.id, envelopeId],
+        );
+      }
+
+      if (delivery === "embedded") {
+        await tx.query(
+          `UPDATE envelopes SET delivery = 'embedded' WHERE id = $1`,
+          [envelopeId],
         );
       }
 
@@ -2602,6 +2671,7 @@ export async function sendDraftEnvelope(
           ipAddress: input.ipAddress ?? null,
           metadata: {
             ...(input.apiKeyId ? { apiKeyId: input.apiKeyId } : {}),
+            ...(delivery === "embedded" ? { delivery } : {}),
             // The send route refuses a send without this confirmation.
             expiresAt,
             reminderIntervalDays: input.reminderIntervalDays ?? null,
@@ -2625,6 +2695,26 @@ export async function sendDraftEnvelope(
     }, database);
   } catch (error) {
     throw error;
+  }
+
+  if (delivery === "embedded") {
+    // No invitation: the app asks the API for a link for each signer in
+    // turn (see embedding.ts). The envelope is out for signature now, so
+    // its envelope.sent webhook can go.
+    await releaseSentWebhook(envelopeId, database).catch((error: unknown) => {
+      console.error(
+        `Releasing the envelope.sent webhook of ${envelopeId} failed:`,
+        error,
+      );
+    });
+
+    return sendEnvelopeResponseSchema.parse({
+      envelopeId,
+      expiresAt,
+      notifiedSignerName: firstSigner.name,
+      redirectPath: `/envelopes/${envelopeId}`,
+      sentAt,
+    });
   }
 
   let invitationMessageId: string | undefined;
@@ -2813,7 +2903,14 @@ export async function changeEnvelopeDeadline(
     await tx.query(
       `
         UPDATE signers
-        SET signing_token_expires_at = $1, updated_at = $2
+        -- A link made for an app keeps its own short life: a later
+        -- deadline must not bring it back or stretch it, though an
+        -- earlier one still cuts it short.
+        SET signing_token_expires_at = CASE
+              WHEN embed_origin IS NULL THEN $1
+              ELSE LEAST(signing_token_expires_at, $1)
+            END,
+            updated_at = $2
         WHERE envelope_id = $3
           AND status = 'notified'
           AND signing_token_hash IS NOT NULL
@@ -2845,6 +2942,9 @@ export async function changeEnvelopeDeadline(
 const SENT_ENVELOPE_SIGNER_CORRECTION_MESSAGE =
   "Only an envelope that is out for signature can have a signer corrected.";
 
+const EMBEDDED_SIGNER_CORRECTION_MESSAGE =
+  "This envelope is signed in another app, which says who signs. Void it and send a new one to change a signer.";
+
 /**
  * Fixes the name and/or email of a signer who has not signed or declined on
  * an envelope that is out for signature. The signing link they already have
@@ -2872,6 +2972,11 @@ export async function correctSentEnvelopeSigner(
   }: CorrectSentEnvelopeSignerOptions = {},
 ): Promise<CorrectSentSignerResult> {
   const parsedInput = correctSentSignerSchema.parse(input);
+
+  if (await isEmbeddedEnvelope(envelopeId, database, userId)) {
+    throw new EnvelopeMutationError(EMBEDDED_SIGNER_CORRECTION_MESSAGE, 409);
+  }
+
   // Read settings before taking the envelope lock: an uncached read inside the
   // transaction borrows a second pool connection, and overlapping corrections
   // holding the others while they wait on the lock would starve it.
@@ -2880,6 +2985,7 @@ export async function correctSentEnvelopeSigner(
 
   return withTransaction(async (tx) => {
     const envelope = await queryOne<{
+      delivery: string;
       expiresAt: number | null;
       part11: boolean;
       status: EnvelopeRecord["status"];
@@ -2890,6 +2996,7 @@ export async function correctSentEnvelopeSigner(
       tx,
       `
         SELECT
+          delivery,
           expires_at AS "expiresAt",
           part11,
           status,
@@ -2912,6 +3019,12 @@ export async function correctSentEnvelopeSigner(
         SENT_ENVELOPE_SIGNER_CORRECTION_MESSAGE,
         409,
       );
+    }
+
+    // Checked again on the locked row: an embedded send may have landed
+    // since the check above.
+    if (envelope.delivery === "embedded") {
+      throw new EnvelopeMutationError(EMBEDDED_SIGNER_CORRECTION_MESSAGE, 409);
     }
 
     if (envelope.part11) {

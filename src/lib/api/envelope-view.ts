@@ -34,6 +34,8 @@ export type ApiEnvelope = {
   copyRecipients: Array<{ email: string; id: string; name: string }>;
   createdAt: string;
   declinedAt: string | null;
+  /** "email", or "embedded" when signers sign inside the calling app. */
+  delivery: "email" | "embedded";
   expired: boolean;
   expiresAt: string | null;
   files: { certificate: string | null; signed: string | null };
@@ -57,6 +59,7 @@ export function isoTime(seconds: number | null | undefined): string | null {
 
 type EnvelopeRow = {
   apiMetadata: Record<string, unknown> | null;
+  delivery: "email" | "embedded";
   completedAt: number | null;
   createdAt: number;
   declinedAt: number | null;
@@ -101,6 +104,7 @@ const ENVELOPE_COLUMNS = `
   e.expires_at AS "expiresAt",
   e.signature_level AS "signatureLevel",
   e.api_metadata AS "apiMetadata",
+  e.delivery,
   e.created_at AS "createdAt"
 `;
 
@@ -177,6 +181,7 @@ export function toApiEnvelope(
       })),
     createdAt: isoTime(row.createdAt) ?? new Date(0).toISOString(),
     declinedAt: isoTime(row.declinedAt),
+    delivery: row.delivery,
     expired:
       row.status === "sent" && row.expiresAt !== null && row.expiresAt <= now,
     expiresAt: isoTime(row.expiresAt),

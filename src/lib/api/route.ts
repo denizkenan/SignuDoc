@@ -7,6 +7,7 @@ import {
   type RateLimitState,
 } from "../auth/api-key.ts";
 import { DownloadAccessError } from "../downloads.ts";
+import { EmbeddingError } from "../embedding.ts";
 import {
   EnvelopeDocumentAccessError,
   EnvelopeMutationError,
@@ -54,6 +55,14 @@ export function apiErrorFor(error: unknown): Response | null {
     return error.code === "too_large"
       ? apiError(413, "payload_too_large", error.message)
       : apiError(400, "invalid_request", error.message);
+  }
+
+  if (error instanceof EmbeddingError) {
+    return apiError(
+      error.statusCode,
+      codeForStatus(error.statusCode),
+      error.message,
+    );
   }
 
   if (error instanceof PendingUploadError) {

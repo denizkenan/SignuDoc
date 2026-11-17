@@ -30,10 +30,18 @@ release says when it does.
   delivery log with "Send again", a test button and secret rotation;
   `GET /api/v1/webhook-deliveries` lets an app catch up. A new daily cron
   job, `/api/internal/webhooks`, sends retries that are due.
+- Embedded signing: an app can send an envelope with
+  `"delivery": "embedded"` and show the signing page in a frame on its own
+  site, from a link it asks for at
+  `POST /api/v1/envelopes/{id}/signers/{signerId}/embed-link`. No invitations
+  are emailed. Only sites an administrator lists under Settings,
+  Organization, Embedded signing can frame the page, and the frame tells
+  the app with `postMessage` when the signer signs or declines. The
+  certificate of completion says the signer was identified by the app.
 
 This changes the database: the new `api_keys`, `api_idempotency`,
-`webhook_endpoints` and `webhook_deliveries` tables and three new columns
-are added by the migrations that run on deploy.
+`webhook_endpoints`, `webhook_deliveries` and `embed_allowed_origins`
+tables and six new columns are added by the migrations that run on deploy.
 
 ## [0.3.0] - 2026-11-16
 

@@ -68,6 +68,7 @@ const metadataSchema = z
   );
 
 export const apiSendOptionsSchema = z.object({
+  delivery: z.enum(["email", "embedded"]).optional(),
   expiresInDays: deadlineDaysSchema.optional(),
   permittedUseConfirmed: z.literal(true, {
     message:
@@ -174,6 +175,7 @@ export async function sendEnvelopeForApi(
     envelopeId,
     {
       apiKeyId: actor.apiKeyId,
+      delivery: options.delivery,
       expiresInDays: options.expiresInDays,
       ipAddress: actor.ipAddress,
       reminderIntervalDays: options.reminderIntervalDays,
