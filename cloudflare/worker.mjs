@@ -224,7 +224,10 @@ export class SignuDocApp extends DurableObject {
   async startAndWaitForPort() {
     const container = this.ctx.container;
     const env = await this.containerEnv();
-    const fingerprint = await fingerprintOf(env);
+    const fingerprint = await fingerprintOf({
+      ...env,
+      __containerImage: container.images.app,
+    });
 
     // Already checked, with these settings, since this object woke up.
     if (container.running && this.ready === fingerprint) {

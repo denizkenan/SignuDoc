@@ -21,8 +21,29 @@ const bundled = await build({
           return new Response(null, {status: 204});
         }
         async state() { return {calls: await this.ctx.storage.get('calls') || 0, path: await this.ctx.storage.get('path'), alarm: await this.ctx.storage.getAlarm()}; }
+        async rolloutCheck() {
+          let starts = 0, stops = 0;
+          const container = {
+            running: false, images: {app: 'old-image'},
+            async destroy() {stops++; this.running = false;},
+            start() {starts++; this.running = true;},
+            async interceptOutboundHttp() {},
+            async setInactivityTimeout() {},
+            getTcpPort() {return {fetch: async () => new Response('ok')};},
+          };
+          const app = {
+            ctx: {container, storage: this.ctx.storage, exports: {StorageGateway: () => ({}), EmailGateway: () => ({}), WebhookSchedulerGateway: () => ({})}},
+            containerEnv: async () => ({APP_URL: 'https://sign.example.com'}),
+            gatewayToken: async () => 'test-token', observeExit() {},
+          };
+          await SignuDocApp.prototype.startAndWaitForPort.call(app);
+          container.images.app = 'new-image';
+          await SignuDocApp.prototype.startAndWaitForPort.call(app);
+          await SignuDocApp.prototype.startAndWaitForPort.call(app);
+          return {starts, stops};
+        }
       }
-      export default {async fetch(request, env, ctx) { if (new URL(request.url).pathname === '/state') return Response.json(await env.APP.getByName('app').state()); return ctx.exports.WebhookSchedulerGateway({props: {token: 'runtime-test-token'}}).fetch(request);}};
+      export default {async fetch(request, env, ctx) { const path = new URL(request.url).pathname; if (path === '/state') return Response.json(await env.APP.getByName('app').state()); if (path === '/rollout-check') return Response.json(await env.APP.getByName('app').rolloutCheck()); return ctx.exports.WebhookSchedulerGateway({props: {token: 'runtime-test-token'}}).fetch(request);}};
     `,
   },
   bundle: true,
@@ -41,6 +62,10 @@ const mf = new Miniflare(
   }),
 );
 try {
+  assert.deepEqual(
+    await (await mf.dispatchFetch("http://test/rollout-check")).json(),
+    { starts: 2, stops: 1 },
+  );
   const getState = async () =>
     (await mf.dispatchFetch("http://test/state")).json();
   const schedule = (at, token = "runtime-test-token") =>
@@ -65,7 +90,7 @@ try {
   assert.equal(state.path, "/api/internal/webhooks");
   assert.equal(state.alarm, null);
   console.log(
-    "Cloudflare runtime: authenticated scheduling, earliest retry, persisted alarm, one-shot drain passed.",
+    "Cloudflare runtime: image update restart, authenticated scheduling, earliest retry, persisted alarm, one-shot drain passed.",
   );
 } finally {
   await mf.dispose();
