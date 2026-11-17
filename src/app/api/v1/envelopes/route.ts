@@ -21,6 +21,7 @@ import { pendingUploadKeyFor } from "@/lib/api/uploads";
 import {
   discardPendingUpload,
   readPendingUpload,
+  readStreamWithLimit,
 } from "@/lib/services/pending-uploads";
 import { createStorageService } from "@/lib/services/storage";
 import { MAX_UPLOAD_SIZE_BYTES } from "@/lib/types/domain";
@@ -78,7 +79,12 @@ export async function POST(request: Request) {
         return limited;
       }
 
-      const raw = new Uint8Array(await request.arrayBuffer());
+      const raw = request.body
+        ? await readStreamWithLimit(
+            request.body,
+            MAX_UPLOAD_SIZE_BYTES + 256 * 1024,
+          )
+        : new Uint8Array();
 
       // A little room over the PDF limit for the form's own parts.
       if (raw.byteLength > MAX_UPLOAD_SIZE_BYTES + 256 * 1024) {

@@ -27,7 +27,7 @@ Keep it on the clipboard for step 3. It contains the database password, so never
 Open this address (it is the "Deploy to Cloudflare" button in the [README](../README.md)):
 
 ```
-https://deploy.workers.cloudflare.com/?url=https://github.com/NYLLON-SOFTWARE/SignuDoc
+https://deploy.workers.cloudflare.com/?url=https://github.com/denizkenan/SignuDoc
 ```
 
 ## 3. Fill in the one screen

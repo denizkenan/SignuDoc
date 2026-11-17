@@ -1,6 +1,12 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 
-import { BUCKET_PLACEHOLDER, sendEmail, serveStorage } from "./gateways.mjs";
+import {
+  BUCKET_PLACEHOLDER,
+  sendEmail,
+  serveStorage,
+  serveWebhookSchedule,
+  setEarlierWebhookAlarm,
+} from "./gateways.mjs";
 
 // Runs SignuDoc on Cloudflare. The app itself is the Next.js server in a
 // container (see ./Dockerfile). This Worker is the front door: it starts
@@ -31,6 +37,17 @@ const INSTANCE_NAME = "app";
 
 const STORAGE_HOST = "storage.signudoc.internal";
 const EMAIL_HOST = "email.signudoc.internal";
+const JOBS_HOST = "jobs.signudoc.internal";
+
+export class WebhookSchedulerGateway extends WorkerEntrypoint {
+  fetch(request) {
+    return serveWebhookSchedule(
+      request,
+      (at) => this.env.APP.getByName(INSTANCE_NAME).scheduleWebhookRetry(at),
+      this.ctx.props?.token,
+    );
+  }
+}
 
 /** The app's document storage, on this Worker's R2 bucket. */
 export class StorageGateway extends WorkerEntrypoint {
@@ -61,6 +78,37 @@ async function fingerprintOf(settings) {
 export class SignuDocApp extends DurableObject {
   starting;
   monitoring;
+  scheduleWebhookRetry(at) {
+    return setEarlierWebhookAlarm(this.ctx.storage, at);
+  }
+
+  async runInternalJob(path) {
+    if (!["/api/internal/webhooks", "/api/internal/retention"].includes(path))
+      throw new Error("Unknown internal job.");
+    const secret =
+      this.env.RETENTION_JOB_SECRET ||
+      this.env.CRON_SECRET ||
+      (await this.storedSecret("jobSecret"));
+    return this.fetch(
+      new Request(`https://signudoc${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${secret}` },
+      }),
+    );
+  }
+
+  async alarm() {
+    await this.ctx.storage.deleteAlarm();
+    try {
+      const response = await this.runInternalJob("/api/internal/webhooks");
+      await response.body?.cancel();
+      if (!response.ok)
+        throw new Error(`Webhook drain returned ${response.status}.`);
+    } catch (error) {
+      await this.scheduleWebhookRetry(Date.now() + 60_000);
+      throw error;
+    }
+  }
   /** The settings the running container was last seen answering with. */
   ready;
 
@@ -145,6 +193,9 @@ export class SignuDocApp extends DurableObject {
       // Signs sessions.
       BETTER_AUTH_SECRET: await this.storedSecret("authSecret"),
       CLOUDFLARE_CONTAINER: "1",
+      RETENTION_JOB_SECRET: await this.storedSecret("jobSecret"),
+      CLOUDFLARE_WEBHOOK_SCHEDULER_URL: `http://${JOBS_HOST}/schedule`,
+      CLOUDFLARE_WEBHOOK_SCHEDULER_TOKEN: gatewayToken,
       // Documents and email through the gateways above. Both drivers send
       // the gateway token with every request: the email driver as its API
       // token, the storage driver as its access key id.
@@ -204,6 +255,10 @@ export class SignuDocApp extends DurableObject {
         EMAIL_HOST,
         this.ctx.exports.EmailGateway({ props }),
       );
+      await container.interceptOutboundHttp(
+        JOBS_HOST,
+        this.ctx.exports.WebhookSchedulerGateway({ props }),
+      );
 
       console.log(`Starting the SignuDoc container for ${env.APP_URL}.`);
       container.start({
@@ -224,13 +279,14 @@ export class SignuDocApp extends DurableObject {
 
     for (let attempt = 0; attempt < STARTUP_ATTEMPTS; attempt++) {
       try {
-        const response = await port.fetch("http://container/", {
+        const response = await port.fetch("http://container/icon.svg", {
           redirect: "manual",
           signal: AbortSignal.timeout(1000),
         });
 
-        // Any answer at all means the server is up.
         await response.body?.cancel();
+        if (!response.ok)
+          throw new Error(`Startup probe returned ${response.status}.`);
         this.ready = fingerprint;
 
         return;
@@ -281,19 +337,11 @@ const worker = {
   // The daily cleanup, in place of the cron job in vercel.json. The schedule
   // is in wrangler.jsonc.
   async scheduled(_controller, env) {
-    const secret = env.RETENTION_JOB_SECRET || env.CRON_SECRET;
-    const response = await env.APP.getByName(INSTANCE_NAME).fetch(
-      "https://signudoc/api/internal/retention",
-      {
-        headers: secret ? { authorization: `Bearer ${secret}` } : {},
-        method: "POST",
-      },
-    );
-
-    await response.body?.cancel();
-
-    if (!response.ok) {
-      throw new Error(`The daily cleanup answered ${response.status}.`);
+    for (const path of ["/api/internal/retention", "/api/internal/webhooks"]) {
+      const response =
+        await env.APP.getByName(INSTANCE_NAME).runInternalJob(path);
+      await response.body?.cancel();
+      if (!response.ok) throw new Error(`${path} answered ${response.status}.`);
     }
   },
 };

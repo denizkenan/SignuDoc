@@ -720,11 +720,44 @@ export function buildOpenApiDocument(serverUrl: string) {
                 },
               },
               description:
-                "Where to PUT the PDF (url, method, headers) and the uploadId to create the envelope with. Only on installs that store files in Vercel Blob.",
+                "Where to PUT the PDF (url, method, headers) and the uploadId to create the envelope with. R2 installs return a scoped, expiring URL on this API; Blob installs return a direct storage URL.",
             },
             ...errors,
           },
           summary: "Get an upload URL for a PDF over 4 MB",
+        },
+      },
+      "/uploads/{uploadId}": {
+        put: {
+          security: [],
+          parameters: [
+            {
+              in: "path",
+              name: "uploadId",
+              required: true,
+              schema: { type: "string", format: "uuid" },
+            },
+            {
+              in: "query",
+              name: "token",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/pdf": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          responses: {
+            "201": { description: "The private pending PDF has been stored." },
+            ...errors,
+          },
+          summary:
+            "Upload one PDF using the capability URL issued by POST /uploads",
         },
       },
     },

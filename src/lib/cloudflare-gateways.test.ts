@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { sendEmail, serveStorage } from "../../cloudflare/gateways.mjs";
+import {
+  sendEmail,
+  serveStorage,
+  serveWebhookSchedule,
+  setEarlierWebhookAlarm,
+} from "../../cloudflare/gateways.mjs";
 import { createS3StorageService } from "./services/storage/s3.ts";
 
 // The two gateways in cloudflare/worker.mjs hold every document and can
@@ -13,6 +18,50 @@ import { createS3StorageService } from "./services/storage/s3.ts";
 const TOKEN = "the-token-of-this-install";
 const STORAGE_URL = "http://storage.signudoc.internal/documents/a/doc.pdf";
 const EMAIL_URL = "http://email.signudoc.internal/send";
+
+test("webhook scheduling requires the internal token and a valid timestamp", async () => {
+  const calls: number[] = [];
+  const schedule = async (at: number) => {
+    calls.push(at);
+  };
+  const request = (token: string, at: unknown) =>
+    new Request("http://jobs.signudoc.internal/schedule", {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ at }),
+    });
+  assert.equal(
+    (await serveWebhookSchedule(request("wrong", 123), schedule, TOKEN)).status,
+    403,
+  );
+  assert.equal(
+    (await serveWebhookSchedule(request(TOKEN, "123"), schedule, TOKEN)).status,
+    400,
+  );
+  assert.deepEqual(calls, []);
+  assert.equal(
+    (await serveWebhookSchedule(request(TOKEN, 123), schedule, TOKEN)).status,
+    204,
+  );
+  assert.deepEqual(calls, [123]);
+});
+
+test("a later retry cannot postpone an earlier webhook alarm", async () => {
+  let alarm: number | null = null;
+  const storage = {
+    getAlarm: async () => alarm,
+    setAlarm: async (at: number) => {
+      alarm = at;
+    },
+  };
+  await setEarlierWebhookAlarm(storage, 5000, 1000);
+  await setEarlierWebhookAlarm(storage, 6000, 1000);
+  assert.equal(alarm, 5000);
+  await setEarlierWebhookAlarm(storage, 3000, 1000);
+  assert.equal(alarm, 3000);
+  await setEarlierWebhookAlarm(storage, 9000, 8000);
+  assert.equal(alarm, 9000);
+});
 
 // A stand-in for an R2 bucket, with the four calls the gateway makes.
 function createFakeBucket() {

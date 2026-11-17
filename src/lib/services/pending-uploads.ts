@@ -23,10 +23,10 @@ type PendingUploadInput = {
   storageService: StorageService;
 };
 
-async function readStreamWithLimit(
+export async function readStreamWithLimit(
   stream: ReadableStream<Uint8Array>,
   maxBytes: number,
-): Promise<Uint8Array> {
+): Promise<Uint8Array<ArrayBuffer>> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;

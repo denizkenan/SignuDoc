@@ -9,7 +9,7 @@
 
 <p align="center">
   <strong>SignuDoc also runs on Cloudflare</strong>, in a container, with documents in R2 and email through Cloudflare.<br><br>
-  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/NYLLON-SOFTWARE/SignuDoc"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare" height="32"></a><br>
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/denizkenan/SignuDoc"><img src="https://deploy.workers.cloudflare.com/button" alt="Deploy to Cloudflare" height="32"></a><br>
   <sub>or <a href="docs/deploy-to-cloudflare-with-an-agent.md">copy this to your LLM</a> · <a href="cloudflare/README.md">what you need and how it works</a></sub><br>
 </p>
 

@@ -181,9 +181,13 @@ curl https://sign.example.com/api/v1/envelopes \
   -d '{ "uploadId": "…", "filename": "big.pdf", "title": "…", "signers": […], "fields": […] }'
 ```
 
-The upload URL works for 10 minutes, and an upload that is never used is
-deleted after a day. Installs that keep files on their own disk (not on
-Vercel) do not need this and answer 404: send any size in the form.
+The upload URL works for 10 minutes. On Cloudflare, the signed PUT goes
+through this API into the private R2 bucket; no R2 access key or public
+bucket URL is exposed. Cloudflare accepts the full 20 MB limit in a multipart
+create request too. Unused R2 uploads expire after a day through the bucket
+lifecycle rule for `uploads/`. Local storage also supports the signed PUT,
+but unused local files need local cleanup. On Vercel, the signed PUT goes
+directly to Blob and expires there after a day.
 
 ## The envelope
 

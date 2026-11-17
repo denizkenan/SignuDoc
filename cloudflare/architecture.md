@@ -56,7 +56,7 @@ npm run check:cloudflare
 npm run deploy:cloudflare
 ```
 
-Wrangler is pinned in `package-lock.json`. The GitHub deployment workflow installs from that lockfile too. It requires the repository's `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets; the local branch has not been pushed or connected to automated deployment.
+Wrangler is pinned in `package-lock.json`. The GitHub deployment workflow installs from that lockfile too. It requires the repository's `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` secrets; the fork is published at `denizkenan/SignuDoc` on `main`. GitHub CI validates pushes; production deployment requires the Cloudflare repository secrets or the authenticated local CLI.
 
 Runtime secrets are stored on the Worker. The ignored local `.data/cloudflare/` directory contains recovery copies, including `setup-token` for the first-run setup form and `secrets.json`. Keep them private. The first administrator still needs to complete `/setup` and choose their own password and organization details.
 
@@ -71,4 +71,12 @@ Tests use disposable local PostgreSQL and captured email, so the live Xata datab
 - The production runtime image served the setup form with a 1 GiB memory limit locally.
 - Live setup returned HTTP 200, rendered in Chromium with no page errors, and required a setup token. Unauthenticated envelope creation and retention requests returned HTTP 401.
 - A temporary object was written to R2, downloaded and compared byte-for-byte, then deleted.
-- Cloudflare Email Sending is enabled; its DKIM and return-path MX records resolve publicly. Real email delivery has not been tested.
+- Cloudflare Email Sending is enabled; its DKIM and return-path MX records resolve publicly. The administrator subsequently sent a successful test email; the current sender is `sign@logistica-os.com`.
+
+## Public API, webhooks and embedding
+
+This fork includes PR #44 (`bae672e`), #45 (`1e041f3`), #46 (`2f645b7`) and #48 (`5c50981`). The integration contract is served at `/api/v1/openapi.json`; [Logistica integration](../docs/logistica-integration.md) explains authentication, ownership, idempotency, signed webhooks and embedding.
+
+The API upload flow works with private R2. It issues a ten-minute signed capability for one upload path and bounds the streamed body at 20 MiB. A repeated PUT preserves the first file. A bucket lifecycle rule expires unused `uploads/` objects after one day. Envelope files under `users/` are unaffected.
+
+Initial webhook delivery runs through Next.js `after()`. Each drain reports the next pending attempt or lease expiry to a token-protected internal Worker gateway. The Durable Object persists an alarm, starts the container only when needed, and calls `/api/internal/webhooks` with the job secret. The daily cron also drains the outbox as a recovery path. This preserves Xata scale-to-zero between actual work. Query strings are redacted from Worker logs to protect signed upload and signing links.

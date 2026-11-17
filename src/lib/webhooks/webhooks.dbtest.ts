@@ -45,6 +45,7 @@ import {
   setWebhookDrainScheduler,
 } from "./outbox.ts";
 import { verifyWebhook } from "./signing.ts";
+import { scheduleCloudflareWebhookRetry } from "./cloudflare-scheduler.ts";
 
 // Webhooks against a real Postgres and a real HTTP receiver on this
 // machine. Run with `npm run test:db`.
@@ -57,6 +58,39 @@ const SETTINGS = [
   "STORAGE_DRIVER",
   "STORAGE_LOCAL_DIR",
 ] as const;
+
+test("Cloudflare schedules the pending lease and stops scheduling disabled endpoints", async () => {
+  const admin = await createAdmin();
+  const { endpoint } = await addEndpoint(admin);
+  await createEnvelope(admin);
+  const now = Math.floor(Date.now() / 1000);
+  await database.query(
+    "update webhook_deliveries set next_attempt_at = $1, locked_until = $2",
+    [now + 60, now + 120],
+  );
+  const requests: Request[] = [];
+  const send: typeof fetch = async (input, init) => {
+    requests.push(new Request(input, init));
+    return new Response(null, { status: 204 });
+  };
+  const schedulerEnv = {
+    CLOUDFLARE_WEBHOOK_SCHEDULER_URL: "http://jobs.signudoc.internal/schedule",
+    CLOUDFLARE_WEBHOOK_SCHEDULER_TOKEN: "internal-test-token",
+  };
+  await scheduleCloudflareWebhookRetry(database, schedulerEnv, send);
+  assert.equal(requests.length, 1);
+  assert.equal(
+    requests[0].headers.get("authorization"),
+    "Bearer internal-test-token",
+  );
+  assert.equal((await requests[0].json()).at, (now + 120) * 1000);
+  await database.query(
+    "update webhook_endpoints set enabled = false where id = $1",
+    [endpoint.id],
+  );
+  await scheduleCloudflareWebhookRetry(database, schedulerEnv, send);
+  assert.equal(requests.length, 1);
+});
 
 type Received = { body: string; headers: IncomingHttpHeaders };
 

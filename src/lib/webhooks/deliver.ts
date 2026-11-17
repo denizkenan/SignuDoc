@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { waitUntil } from "@vercel/functions";
+import { after } from "next/server.js";
 
 import { getApiEnvelopeWithOwner } from "../api/envelope-view.ts";
 import {
@@ -15,15 +15,15 @@ import { signingSecretsFor } from "./endpoints.ts";
 import { WEBHOOK_TEST_EVENT } from "./events.ts";
 import { postWebhook, type WebhookPostResult } from "./safe-post.ts";
 import { webhookHeaders } from "./signing.ts";
+import { scheduleCloudflareWebhookRetry } from "./cloudflare-scheduler.ts";
 
 // Sending deliveries. A drain claims the deliveries that are due, sends
 // them, and records what happened: delivered on a 2xx answer, otherwise a
 // next try on the schedule below, until the last try fails for good.
 //
-// Three things start a drain, all inside Vercel: a change that queued a
-// delivery (kept alive with waitUntil), any later API request, and
-// the daily cron (see /api/internal/webhooks). On Hobby, with no traffic,
-// a retry can therefore wait until the next day.
+// A change queues an after-response drain, and API calls and the daily cron
+// recover missed work. Cloudflare also persists the next retry as an alarm,
+// so idle installs need no polling. Vercel Hobby falls back to daily cron.
 
 /** Seconds to wait after try 1, 2, ... before the next. */
 export const RETRY_DELAYS_SECONDS = [
@@ -448,6 +448,9 @@ export async function drainWebhookDeliveries(
     }
   }
 
+  // The outbox remains the source of truth. An alarm wakes the container
+  // only for an actual pending delivery, including an abandoned lease.
+  await scheduleCloudflareWebhookRetry(database, env);
   return summary;
 }
 
@@ -489,22 +492,32 @@ async function drainQuietly() {
 
 /**
  * Starts sending due deliveries without holding up the response.
- * waitUntil keeps a Vercel function alive until it is done; on a server
- * that stays up it is not needed, and the work simply runs.
+ * Next's after() ties work to the response lifecycle on both Vercel and
+ * the Cloudflare Node container. Retries survive container sleep in Xata.
  */
 export function scheduleWebhookDrain() {
-  waitUntil(drainQuietly());
+  runAfterResponse(drainQuietly);
 }
 
 /** Like scheduleWebhookDrain, but only when something is due. */
 export function scheduleWebhookDrainIfDue() {
-  waitUntil(
-    (async () => {
-      if (await hasDueWebhookDeliveries().catch(() => false)) {
-        await drainQuietly();
-      }
-    })(),
-  );
+  runAfterResponse(async () => {
+    if (await hasDueWebhookDeliveries().catch(() => false)) {
+      await drainQuietly();
+    }
+  });
+}
+
+function runAfterResponse(task: () => Promise<void>) {
+  try {
+    after(task);
+  } catch {
+    // Scripts/tests have no request lifecycle. A Node server otherwise
+    // uses Next's after(), which also supports Vercel deployments.
+    void task().catch((error: unknown) =>
+      console.error("[webhooks] Background task failed:", error),
+    );
+  }
 }
 
 /**

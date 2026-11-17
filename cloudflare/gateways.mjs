@@ -11,6 +11,28 @@
 // bucket, the one bound to the Worker, so the name is only a placeholder.
 export const BUCKET_PLACEHOLDER = "documents";
 
+/** Keep the earliest pending retry; a later delivery cannot postpone it. */
+export async function setEarlierWebhookAlarm(storage, at, now = Date.now()) {
+  const wanted = Math.max(at, now + 1000);
+  const current = await storage.getAlarm();
+  if (current === null || current <= now || wanted < current) {
+    await storage.setAlarm(wanted);
+  }
+}
+
+/** Authenticated, container-only gateway for durable webhook wake-ups. */
+export async function serveWebhookSchedule(request, schedule, token) {
+  if (!holdsToken(emailToken(request), token))
+    return new Response("AccessDenied", { status: 403 });
+  if (request.method !== "POST")
+    return new Response("MethodNotAllowed", { status: 405 });
+  const body = await request.json().catch(() => null);
+  if (!Number.isSafeInteger(body?.at) || body.at < 0)
+    return new Response("InvalidRequest", { status: 400 });
+  await schedule(body.at);
+  return new Response(null, { status: 204 });
+}
+
 function sameText(left, right) {
   let difference = left.length ^ right.length;
 

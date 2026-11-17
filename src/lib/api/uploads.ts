@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   issueSignedToken,
@@ -11,6 +11,8 @@ import {
   isPendingUploadKey,
 } from "../services/storage-keys.ts";
 import { MAX_UPLOAD_SIZE_BYTES } from "../types/domain.ts";
+import { resolveStorageDriver } from "../services/storage/driver.ts";
+import { getEnv, resolveAppUrl, type EnvSource } from "../utils/env.ts";
 
 // Large PDFs for the API. A request to a Vercel Function is capped at
 // 4.5 MB, so a bigger file goes straight to Vercel Blob: the API hands out a
@@ -57,7 +59,13 @@ export async function issueApiUpload(
     issueToken = issueSignedToken,
     now = Date.now(),
     presign = presignUrl,
-  }: { issueToken?: IssueToken; now?: number; presign?: Presign } = {},
+    env = process.env,
+  }: {
+    issueToken?: IssueToken;
+    now?: number;
+    presign?: Presign;
+    env?: EnvSource;
+  } = {},
 ): Promise<ApiUpload> {
   const uploadId = randomUUID();
   const pathname = pendingUploadKeyFor(userId, uploadId);
@@ -67,6 +75,24 @@ export async function issueApiUpload(
   }
 
   const validUntil = now + UPLOAD_URL_LIFETIME_MS;
+  if (resolveStorageDriver(env) !== "blob") {
+    const payload = Buffer.from(
+      JSON.stringify({ userId, uploadId, validUntil }),
+    ).toString("base64url");
+    const signature = uploadSignature(payload, env).toString("base64url");
+    const origin = resolveAppUrl(env);
+    if (!origin) throw new Error("APP_URL is required to issue an upload URL.");
+    const url = new URL(`/api/v1/uploads/${uploadId}`, origin);
+    url.searchParams.set("token", `${payload}.${signature}`);
+    return {
+      expiresAt: new Date(validUntil).toISOString(),
+      headers: { "content-type": "application/pdf" },
+      maxBytes: MAX_UPLOAD_SIZE_BYTES,
+      method: "PUT",
+      uploadId,
+      url: url.href,
+    };
+  }
   const token = await issueToken({
     allowedContentTypes: ["application/pdf"],
     maximumSizeInBytes: MAX_UPLOAD_SIZE_BYTES,
@@ -94,4 +120,46 @@ export async function issueApiUpload(
     uploadId,
     url: presignedUrl,
   };
+}
+
+function uploadSignature(payload: string, env: EnvSource): Buffer {
+  const secret = getEnv(env).auth.betterAuthSecret;
+  if (!secret)
+    throw new Error("BETTER_AUTH_SECRET is required to issue an upload URL.");
+  return createHmac("sha256", secret).update(`api-upload:${payload}`).digest();
+}
+
+/** A capability for one account, upload, method and expiry; never an API key. */
+export function verifyApiUploadToken(
+  uploadId: string,
+  token: string | null,
+  {
+    env = process.env,
+    now = Date.now(),
+  }: { env?: EnvSource; now?: number } = {},
+): { key: string; userId: string } | null {
+  if (!token || token.length > 2048 || !/^[\w-]+\.[\w-]+$/.test(token))
+    return null;
+  const [payload, signature] = token.split(".");
+  const supplied = Buffer.from(signature, "base64url");
+  const expected = uploadSignature(payload, env);
+  if (
+    supplied.length !== expected.length ||
+    !timingSafeEqual(supplied, expected)
+  )
+    return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (
+      data.uploadId !== uploadId ||
+      typeof data.userId !== "string" ||
+      !Number.isSafeInteger(data.validUntil) ||
+      data.validUntil <= now
+    )
+      return null;
+    const key = pendingUploadKeyFor(data.userId, uploadId);
+    return key ? { key, userId: data.userId } : null;
+  } catch {
+    return null;
+  }
 }

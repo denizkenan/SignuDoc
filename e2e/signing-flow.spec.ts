@@ -1297,6 +1297,76 @@ test("an administrator makes an API key and a webhook, an app sends and download
   const receiver = await startWebhookReceiver();
   let webhookSecret = "";
 
+  await test.step("a scoped upload URL stores a PDF without Blob and refuses a modified URL", async () => {
+    const auth = { authorization: `Bearer ${key}` };
+    const issued = await api.post("/api/v1/uploads", { headers: auth });
+    expect(issued.status()).toBe(201);
+    const upload = await issued.json();
+    const pdfPath = await writeSamplePdf(
+      test.info().outputPath("api-upload.pdf"),
+    );
+    const { readFile } = await import("node:fs/promises");
+    const bytes = await readFile(pdfPath);
+    const invalid = new URL(upload.url);
+    invalid.searchParams.set("token", "invalid");
+    expect(
+      (
+        await api.put(invalid.href, { headers: upload.headers, data: bytes })
+      ).status(),
+    ).toBe(401);
+    expect(
+      (
+        await api.put(upload.url, {
+          headers: { "content-type": "text/plain" },
+          data: bytes,
+        })
+      ).status(),
+    ).toBe(400);
+    expect(
+      (
+        await api.put(upload.url, { headers: upload.headers, data: bytes })
+      ).status(),
+    ).toBe(201);
+    // A retry cannot replace the first PDF with invalid bytes.
+    expect(
+      (
+        await api.put(upload.url, {
+          headers: upload.headers,
+          data: "not a PDF",
+        })
+      ).status(),
+    ).toBe(201);
+    const created = await api.post("/api/v1/envelopes", {
+      headers: auth,
+      data: {
+        uploadId: upload.uploadId,
+        title: "Uploaded API draft",
+        signers: [
+          { ref: "client", name: "Client", email: "upload-client@example.com" },
+        ],
+        fields: [
+          {
+            type: "signature",
+            signer: "client",
+            page: 1,
+            x: 0.1,
+            y: 0.7,
+            width: 0.3,
+            height: 0.05,
+          },
+        ],
+      },
+    });
+    expect(created.status()).toBe(201);
+    const envelope = await created.json();
+    expect(envelope.status).toBe("draft");
+    expect(
+      (
+        await api.delete(`/api/v1/envelopes/${envelope.id}`, { headers: auth })
+      ).status(),
+    ).toBe(200);
+  });
+
   await test.step("a webhook endpoint is added in Settings, and its test event arrives signed", async () => {
     await page
       .getByPlaceholder("https://app.example.com/webhooks/signudoc")
