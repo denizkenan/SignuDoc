@@ -813,6 +813,13 @@ async function recordViewedEventOnce(
   database: DbPool,
 ): Promise<void> {
   await withTransaction(async (tx) => {
+    // Two first openings at once must not both pass the check below and
+    // record two first views (and send two signer.viewed webhooks). This
+    // lock is taken only here, before any other, so it cannot deadlock.
+    await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+      `signudoc:first-view:${context.signer.id ?? ""}`,
+    ]);
+
     const existing = await queryOne<{ id: string }>(
       tx,
       `

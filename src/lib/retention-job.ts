@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 import { deleteExpiredIdempotencyKeys } from "./api/idempotency.ts";
 import { getDb, type DbPool } from "./db/connection.ts";
+import { deleteOldWebhookDeliveries } from "./webhooks/log.ts";
 import {
   envelopeScheduleFailed,
   runEnvelopeSchedule,
@@ -176,6 +177,12 @@ export async function runRetentionJob({
       // A database from before the API has no table to clear.
       if (!isMissingSchemaError(error)) {
         console.error("Clearing old API idempotency keys failed:", error);
+      }
+    });
+
+    await deleteOldWebhookDeliveries(database).catch((error: unknown) => {
+      if (!isMissingSchemaError(error)) {
+        console.error("Clearing old webhook deliveries failed:", error);
       }
     });
 

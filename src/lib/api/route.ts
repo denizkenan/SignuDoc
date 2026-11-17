@@ -22,6 +22,7 @@ import {
 import { DocumentImportError } from "../services/document-import.ts";
 import { PendingUploadError } from "../services/pending-uploads.ts";
 import { TemplateError } from "../templates.ts";
+import { scheduleWebhookDrainIfDue } from "../webhooks/deliver.ts";
 import { describeZodError, type ApiActor } from "./envelopes.ts";
 import { apiError, apiJson, codeForStatus } from "./http.ts";
 import {
@@ -100,6 +101,10 @@ export async function handleApi(
     rateLimit: principal.rateLimit,
     request,
   };
+
+  // A request from an app is a good moment to send webhook retries that
+  // are due, so they need not wait for the daily cron.
+  scheduleWebhookDrainIfDue();
 
   try {
     return withRateLimitHeaders(await handler(context), principal.rateLimit);

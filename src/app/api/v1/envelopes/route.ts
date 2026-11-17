@@ -47,6 +47,14 @@ export async function GET(request: Request) {
 
       const page = await listApiEnvelopes(actor.userId, query.data);
 
+      if (!page) {
+        return apiError(
+          400,
+          "invalid_request",
+          "cursor: not a cursor this API gave out.",
+        );
+      }
+
       return apiJson({
         data: page.data,
         nextCursor: page.nextCursor,

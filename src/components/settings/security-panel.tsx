@@ -47,6 +47,9 @@ const EVENT_LABELS: Record<SystemAuditEvent["event"], string> = {
   two_factor_enabled: "Two-step sign-in turned on",
   two_factor_requirement_changed: "Two-step sign-in requirement changed",
   two_factor_reset: "Two-step sign-in reset by an administrator",
+  webhook_endpoint_changed: "Webhook endpoint changed",
+  webhook_endpoint_created: "Webhook endpoint added",
+  webhook_endpoint_deleted: "Webhook endpoint removed",
 };
 
 const SIGN_IN_FAILURE_REASONS: Record<string, string> = {
@@ -104,6 +107,20 @@ function describeEvent(event: SystemAuditEvent): string {
         metadata.reason === "role_removed"
           ? "owner is no longer an administrator"
           : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+    case "webhook_endpoint_created":
+    case "webhook_endpoint_changed":
+    case "webhook_endpoint_deleted":
+      return [
+        typeof metadata.url === "string" ? metadata.url : null,
+        metadata.secretRotated === true ? "new signing secret" : null,
+        metadata.enabled === false
+          ? "turned off"
+          : metadata.enabled === true
+            ? "turned on"
+            : null,
       ]
         .filter(Boolean)
         .join(", ");

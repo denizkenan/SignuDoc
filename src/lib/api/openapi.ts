@@ -2,6 +2,8 @@
 // openapi.test.ts checks that every route file has a path here and every
 // path here has a route file, so the two cannot drift apart.
 
+import { webhookEventTypes } from "../webhooks/events.ts";
+
 const errorResponse = {
   content: {
     "application/json": { schema: { $ref: "#/components/schemas/Error" } },
@@ -614,6 +616,50 @@ export function buildOpenApiDocument(serverUrl: string) {
             ...errors,
           },
           summary: "Create an envelope from a template",
+        },
+      },
+      "/webhook-deliveries": {
+        get: {
+          parameters: [
+            {
+              description: "Only deliveries made at or after this time.",
+              in: "query",
+              name: "since",
+              schema: { format: "date-time", type: "string" },
+            },
+            {
+              in: "query",
+              name: "status",
+              schema: {
+                enum: ["delivered", "failed", "pending"],
+                type: "string",
+              },
+            },
+            {
+              in: "query",
+              name: "type",
+              schema: { enum: [...webhookEventTypes], type: "string" },
+            },
+            {
+              in: "query",
+              name: "limit",
+              schema: {
+                default: 25,
+                maximum: 100,
+                minimum: 1,
+                type: "integer",
+              },
+            },
+            { in: "query", name: "cursor", schema: { type: "string" } },
+          ],
+          responses: {
+            "200": {
+              description:
+                "Webhook deliveries to every endpoint, newest first, each with the payload it carried (null until its first try).",
+            },
+            ...errors,
+          },
+          summary: "List webhook deliveries, to catch up on missed events",
         },
       },
       "/uploads": {

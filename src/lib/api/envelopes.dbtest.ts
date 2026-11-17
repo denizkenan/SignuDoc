@@ -343,6 +343,7 @@ test("the list pages with a cursor, newest first, and filters by status", async 
   // Same-second creations still come back in a stable order.
   const first = await listApiEnvelopes(actor.userId, { limit: 2 }, database);
 
+  assert.ok(first);
   assert.equal(first.data.length, 2);
   assert.ok(first.nextCursor);
 
@@ -352,6 +353,7 @@ test("the list pages with a cursor, newest first, and filters by status", async 
     database,
   );
 
+  assert.ok(second);
   assert.equal(second.data.length, 1);
   assert.equal(second.nextCursor, null);
   assert.deepEqual(
@@ -365,7 +367,7 @@ test("the list pages with a cursor, newest first, and filters by status", async 
         { limit: 25, status: "sent" },
         database,
       )
-    ).data.length,
+    )?.data.length,
     0,
   );
 });

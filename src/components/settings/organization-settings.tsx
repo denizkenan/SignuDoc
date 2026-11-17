@@ -10,6 +10,7 @@ import { Part11Panel } from "@/components/settings/part11-panel";
 import { PeoplePanel } from "@/components/settings/people-panel";
 import { SecurityPanel } from "@/components/settings/security-panel";
 import { SignerDataPanel } from "@/components/settings/signer-data-panel";
+import { WebhooksPanel } from "@/components/settings/webhooks-panel";
 import type { EmailDnsRecord, EmailStatus } from "@/lib/email-status";
 import type {
   OrganizationSettingsField,
@@ -415,6 +416,8 @@ export function OrganizationSettings({
         ) : null}
 
         {!values.hosted ? <ApiKeysPanel /> : null}
+
+        {!values.hosted ? <WebhooksPanel /> : null}
 
         <SignerDataPanel />
       </div>

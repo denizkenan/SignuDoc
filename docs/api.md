@@ -233,28 +233,153 @@ Every endpoint that returns an envelope returns the same object:
   completion once it is completed, declined or voided.
 
 To know when something happens without asking again and again, use
-webhooks (coming in the next release).
+[webhooks](#webhooks).
 
 ## Endpoints
 
-| Method and path                                | Access | What it does                                                                                                                                                |
-| ---------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/v1/me`                               | read   | Which key this is and whom it acts as.                                                                                                                      |
-| `POST /api/v1/envelopes`                       | write  | Creates an envelope, and sends it if asked.                                                                                                                 |
-| `GET /api/v1/envelopes`                        | read   | Lists envelopes, newest first: `?status=`, `?limit=` (up to 100, 25 by default), and `?cursor=` with the `nextCursor` of the page before.                   |
-| `GET /api/v1/envelopes/{id}`                   | read   | One envelope.                                                                                                                                               |
-| `POST /api/v1/envelopes/{id}/send`             | write  | Sends a draft. Body: the `send` options above.                                                                                                              |
-| `POST /api/v1/envelopes/{id}/void`             | write  | Voids a sent envelope. Body: `{"reason": "…"}`, required on Part 11 installs.                                                                               |
-| `POST /api/v1/envelopes/{id}/remind`           | write  | Emails the signer whose turn it is a reminder, at most once a day as in the web app.                                                                        |
-| `DELETE /api/v1/envelopes/{id}`                | write  | Deletes a draft.                                                                                                                                            |
-| `GET /api/v1/envelopes/{id}/events`            | read   | The audit trail, oldest first.                                                                                                                              |
-| `GET /api/v1/envelopes/{id}/files/signed`      | read   | The signed PDF.                                                                                                                                             |
-| `GET /api/v1/envelopes/{id}/files/certificate` | read   | The certificate of completion.                                                                                                                              |
-| `POST /api/v1/uploads`                         | write  | An upload URL for a PDF over 4 MB.                                                                                                                          |
-| `GET /api/v1/templates`                        | read   | Saved templates, with their roles in signing order.                                                                                                         |
-| `POST /api/v1/templates/{id}/envelopes`        | write  | An envelope from a template: `title`, `signers` (`name`, `email`, one per role in order), and optionally `metadata` and `send`. Takes an `Idempotency-Key`. |
-| `GET /api/v1/openapi.json`                     | none   | The OpenAPI 3.1 description of all of this, for code generators and API tools.                                                                              |
+| Method and path                                | Access | What it does                                                                                                                                                   |
+| ---------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/me`                               | read   | Which key this is and whom it acts as.                                                                                                                         |
+| `POST /api/v1/envelopes`                       | write  | Creates an envelope, and sends it if asked.                                                                                                                    |
+| `GET /api/v1/envelopes`                        | read   | Lists envelopes, newest first: `?status=`, `?limit=` (up to 100, 25 by default), and `?cursor=` with the `nextCursor` of the page before.                      |
+| `GET /api/v1/envelopes/{id}`                   | read   | One envelope.                                                                                                                                                  |
+| `POST /api/v1/envelopes/{id}/send`             | write  | Sends a draft. Body: the `send` options above.                                                                                                                 |
+| `POST /api/v1/envelopes/{id}/void`             | write  | Voids a sent envelope. Body: `{"reason": "…"}`, required on Part 11 installs.                                                                                  |
+| `POST /api/v1/envelopes/{id}/remind`           | write  | Emails the signer whose turn it is a reminder, at most once a day as in the web app.                                                                           |
+| `DELETE /api/v1/envelopes/{id}`                | write  | Deletes a draft.                                                                                                                                               |
+| `GET /api/v1/envelopes/{id}/events`            | read   | The audit trail, oldest first.                                                                                                                                 |
+| `GET /api/v1/envelopes/{id}/files/signed`      | read   | The signed PDF.                                                                                                                                                |
+| `GET /api/v1/envelopes/{id}/files/certificate` | read   | The certificate of completion.                                                                                                                                 |
+| `POST /api/v1/uploads`                         | write  | An upload URL for a PDF over 4 MB.                                                                                                                             |
+| `GET /api/v1/templates`                        | read   | Saved templates, with their roles in signing order.                                                                                                            |
+| `POST /api/v1/templates/{id}/envelopes`        | write  | An envelope from a template: `title`, `signers` (`name`, `email`, one per role in order), and optionally `metadata` and `send`. Takes an `Idempotency-Key`.    |
+| `GET /api/v1/webhook-deliveries`               | read   | Webhook deliveries, newest first, with the payload each carried: `?since=` (ISO time), `?type=`, `?status=`, `?limit=`, `?cursor=`. See [Webhooks](#webhooks). |
+| `GET /api/v1/openapi.json`                     | none   | The OpenAPI 3.1 description of all of this, for code generators and API tools.                                                                                 |
 
 Envelopes made through the API are ordinary envelopes: they show in the key's
 administrator's documents, can be followed and voided there, and their audit
 trail records the key that sent them.
+
+## Webhooks
+
+A webhook tells your app the moment an envelope changes, so it does not
+have to ask. An administrator adds an endpoint under Settings,
+Organization, Webhooks: an `https://` URL, the events it wants, and an
+optional description. The signing secret (`whsec_…`) is shown once, then.
+"Send test" sends a `webhook.test` event at once and says how your app
+answered.
+
+Endpoints belong to the whole install: each one gets events for every
+envelope, whoever sent it. `data.owner` says whose envelope it is, so an app
+can ignore the ones that are not its own. An install can have 10 endpoints.
+
+### Events
+
+| Event                | When                                                                                         |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `envelope.sent`      | The envelope was sent. `data.signer` is the first signer, now invited.                       |
+| `signer.viewed`      | A signer opened it for the first time.                                                       |
+| `signer.signed`      | A signer signed. `data.signer` is who.                                                       |
+| `envelope.completed` | Everyone signed. The signed PDF and the certificate are ready to download when this arrives. |
+| `envelope.declined`  | A signer declined. `data.reason` is the reason they gave, if any.                            |
+| `envelope.voided`    | The sender voided it. `data.reason` is why, if given.                                        |
+| `envelope.expired`   | Its deadline passed before everyone signed.                                                  |
+
+### What arrives
+
+Each event is a `POST` with a JSON body:
+
+```json
+{
+  "type": "signer.signed",
+  "timestamp": "2026-11-18T09:14:03.000Z",
+  "data": {
+    "envelope": { "object": "envelope", "id": "…", "status": "sent", "…": "…" },
+    "owner": { "id": "…", "email": "ops@example.com", "name": "Ops" },
+    "signer": { "id": "…", "ref": "client", "status": "signed", "…": "…" }
+  }
+}
+```
+
+`data.envelope` is the same [envelope](#the-envelope) the API returns, as it
+was when the event was first sent.
+
+### Checking the signature
+
+Deliveries follow [Standard Webhooks](https://www.standardwebhooks.com), so
+you can check them with one of its libraries instead of your own code. Each
+carries three headers:
+
+- `webhook-id`: the delivery's id (`msg_…`). The same on every try, so use
+  it to ignore a delivery you already handled.
+- `webhook-timestamp`: when this try was sent, in seconds since 1970.
+  Refuse one more than five minutes old.
+- `webhook-signature`: `v1,` and the base64 HMAC-SHA256 of
+  `{webhook-id}.{webhook-timestamp}.{body}`, keyed with the secret's bytes
+  (the base64 after `whsec_`). Check it against the raw body, before you
+  parse it.
+
+Without a library, in Node.js:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function isFromSignuDoc(headers, rawBody, secret) {
+  const id = headers["webhook-id"];
+  const timestamp = headers["webhook-timestamp"];
+
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {
+    return false;
+  }
+
+  const key = Buffer.from(secret.slice("whsec_".length), "base64");
+  const expected = Buffer.from(
+    `v1,${createHmac("sha256", key).update(`${id}.${timestamp}.${rawBody}`).digest("base64")}`,
+  );
+
+  // During a secret rotation there are two signatures, space separated.
+  return headers["webhook-signature"].split(" ").some((signature) => {
+    const given = Buffer.from(signature);
+
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  });
+}
+```
+
+"New secret" in Settings makes a new secret and shows it once. For 24 hours
+after that, deliveries are signed with both the old and the new one, so you
+can switch without missing any.
+
+### Answers and retries
+
+Answer with any `2xx` within 10 seconds, and do the slow work after. Any
+other answer, a redirect, or no answer counts as a failure, and the delivery
+is tried again 1 minute, 5 minutes, 30 minutes, 2 hours, 8 hours, 24 hours
+and 24 hours later, about two and a half days in all. After the eighth try
+it is marked failed. A delivery whose envelope has since been deleted is
+not sent again. The delivery log in Settings shows the last 100
+deliveries per endpoint, with your app's answer, and "Send again" puts a
+delivered or failed one back in line.
+
+Retries go out when something wakes the install: the next change to any
+envelope, the next API call, or the daily cron job. On Vercel's Hobby plan
+crons run once a day, so on a quiet install a retry can wait until the next
+day. On Pro you can run it more often by changing the schedule of
+`/api/internal/webhooks` in `vercel.json`, for example to `*/5 * * * *`.
+
+If your app was down, `GET /api/v1/webhook-deliveries?since=…` lists what
+it missed, with the same payloads. Deliveries are kept 30 days once
+delivered and 90 days otherwise.
+
+### Safety
+
+The URL must be `https://` and must not point at a private, loopback or
+link-local address. The address is checked each time a delivery is sent,
+and the request goes to the address that was checked. Redirects are not
+followed. For a receiver on your own machine while developing, set
+`WEBHOOK_ALLOW_PRIVATE_URLS=1`; it allows `http://` and local addresses,
+and is ignored on Vercel.
+
+Signing secrets are stored encrypted with a key derived from
+`BETTER_AUTH_SECRET`. If that secret changes, deliveries fail with a note
+to make a new secret in Settings.

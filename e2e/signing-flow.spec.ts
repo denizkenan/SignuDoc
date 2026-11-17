@@ -5,6 +5,10 @@ import { e2eDatabaseUrl, e2eSetupToken } from "../playwright.config";
 import { extractLink, extractLinks, waitForEmail } from "./support/outbox";
 import { totpCode } from "./support/totp";
 import { writeSamplePdf } from "./support/sample-pdf";
+import {
+  hasValidSignature,
+  startWebhookReceiver,
+} from "./support/webhook-receiver";
 
 const PASSWORD = "correct horse battery staple 42";
 // The ampersand is on purpose: the name goes into HTML emails and page titles.
@@ -1216,7 +1220,7 @@ test("a signer signs with a qualified signature in their own name, through the s
   });
 });
 
-test("an administrator makes an API key, an app sends and downloads an envelope with it, and revoking it stops it", async ({
+test("an administrator makes an API key and a webhook, an app sends and downloads an envelope and hears each step, and revoking the key stops it", async ({
   baseURL,
   browser,
   page,
@@ -1283,6 +1287,40 @@ test("an administrator makes an API key, an app sends and downloads an envelope 
     expect(await anonymous.json()).toMatchObject({
       error: { code: "unauthorized" },
     });
+  });
+
+  const receiver = await startWebhookReceiver();
+  let webhookSecret = "";
+
+  await test.step("a webhook endpoint is added in Settings, and its test event arrives signed", async () => {
+    await page
+      .getByPlaceholder("https://app.example.com/webhooks/signudoc")
+      .fill(receiver.url);
+    await page
+      .getByPlaceholder("What this endpoint is for")
+      .fill("Billing app");
+    await page.getByRole("button", { name: "Add endpoint" }).click();
+
+    webhookSecret =
+      (await page
+        .getByTestId("new-webhook-secret")
+        .locator("code")
+        .textContent()) ?? "";
+    expect(webhookSecret).toMatch(/^whsec_/);
+    await page
+      .getByTestId("new-webhook-secret")
+      .getByRole("button", { name: "Done" })
+      .click();
+
+    const endpoints = page.getByRole("list", { name: "Webhook endpoints" });
+
+    await expect(endpoints.getByText(receiver.url)).toBeVisible();
+    await endpoints.getByRole("button", { name: "Send test" }).click();
+    await expect(page.getByText("The test event was delivered")).toBeVisible();
+    expect(receiver.received.map((webhook) => webhook.json.type)).toEqual([
+      "webhook.test",
+    ]);
+    expect(hasValidSignature(receiver.received[0]!, webhookSecret)).toBe(true);
   });
 
   await test.step("an app creates and sends an envelope, a signer signs, and the app downloads it", async () => {
@@ -1444,6 +1482,50 @@ test("an administrator makes an API key, an app sends and downloads an envelope 
 
     expect(list.data.map((item) => item.id)).toContain(envelope.id);
 
+    // Each step reached the app, signed, carrying the envelope.
+    await expect
+      .poll(() =>
+        receiver.received
+          .filter((webhook) => webhook.json.type !== "webhook.test")
+          .map((webhook) => webhook.json.type)
+          .sort(),
+      )
+      .toEqual([
+        "envelope.completed",
+        "envelope.sent",
+        "signer.signed",
+        "signer.viewed",
+      ]);
+
+    for (const webhook of receiver.received) {
+      expect(hasValidSignature(webhook, webhookSecret)).toBe(true);
+    }
+
+    const completedHook = receiver.received.find(
+      (webhook) => webhook.json.type === "envelope.completed",
+    );
+
+    expect(completedHook?.json.data).toMatchObject({
+      envelope: {
+        files: { signed: `/api/v1/envelopes/${envelope.id}/files/signed` },
+        id: envelope.id,
+        metadata: { invoice: "INV-1042" },
+        status: "completed",
+      },
+      owner: { email: adminEmail },
+    });
+
+    const deliveries = (await (
+      await api.get("/api/v1/webhook-deliveries?type=envelope.completed", {
+        headers: auth,
+      })
+    ).json()) as { data: Array<{ envelopeId: string; status: string }> };
+
+    expect(deliveries.data[0]).toMatchObject({
+      envelopeId: envelope.id,
+      status: "delivered",
+    });
+
     const openapi = await api.get("/api/v1/openapi.json");
 
     expect(openapi.status()).toBe(200);
@@ -1467,6 +1549,7 @@ test("an administrator makes an API key, an app sends and downloads an envelope 
   });
 
   await api.dispose();
+  await receiver.close();
 });
 
 test("two-step sign-in: an administrator sets it up and requires it of everyone", async ({

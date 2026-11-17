@@ -22,9 +22,18 @@ release says when it does.
   delete; list and read envelopes and their audit trail; download the signed
   PDF and the certificate; start an envelope from a template; upload PDFs
   over 4 MB straight to Blob. `GET /api/v1/openapi.json` describes it all.
+- Webhooks: an administrator can add endpoints under Settings,
+  Organization, Webhooks, to be told when an envelope is sent, viewed,
+  signed, completed, declined, voided or expires. Deliveries are signed the
+  Standard Webhooks way, written in the same transaction as the change they
+  report, and retried for about two and a half days. Settings shows a
+  delivery log with "Send again", a test button and secret rotation;
+  `GET /api/v1/webhook-deliveries` lets an app catch up. A new daily cron
+  job, `/api/internal/webhooks`, sends retries that are due.
 
-This changes the database: the new `api_keys` and `api_idempotency` tables
-and three new columns are added by the migrations that run on deploy.
+This changes the database: the new `api_keys`, `api_idempotency`,
+`webhook_endpoints` and `webhook_deliveries` tables and three new columns
+are added by the migrations that run on deploy.
 
 ## [0.3.0] - 2026-11-16
 
