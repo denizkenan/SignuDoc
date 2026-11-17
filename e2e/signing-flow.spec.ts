@@ -1216,6 +1216,91 @@ test("a signer signs with a qualified signature in their own name, through the s
   });
 });
 
+test("an administrator makes an API key, the API accepts it, and revoking it stops it", async ({
+  baseURL,
+  page,
+  playwright,
+}) => {
+  const database = new pg.Client({ connectionString: e2eDatabaseUrl });
+  let adminEmail = "";
+
+  await database.connect();
+
+  try {
+    adminEmail =
+      (
+        await database.query<{ email: string }>(
+          `select email from public."user" where role = 'admin' order by "createdAt" limit 1`,
+        )
+      ).rows[0]?.email ?? "";
+  } finally {
+    await database.end();
+  }
+
+  expect(adminEmail).not.toBe("");
+
+  // A separate client, with no session cookie: only the key gets it in.
+  const api = await playwright.request.newContext({ baseURL });
+  let key = "";
+
+  await test.step("the key is made in Settings and shown once", async () => {
+    await page.goto("/login");
+    await page.getByLabel("Email").fill(adminEmail);
+    await page.getByLabel("Password").fill(PASSWORD);
+    await page.getByRole("button", { name: "Log in" }).click();
+    await expect(page).toHaveURL(/\/dashboard$/);
+    await page.goto("/settings");
+    await page.getByPlaceholder("For example: Billing app").fill("Billing app");
+    await page.getByRole("button", { name: "Create key" }).click();
+
+    key =
+      (await page.getByTestId("new-api-key").locator("code").textContent()) ??
+      "";
+    expect(key).toMatch(/^sdk_[A-Za-z0-9_-]{43}$/);
+    await page.getByRole("button", { name: "Done" }).click();
+    await expect(page.getByTestId("new-api-key")).toHaveCount(0);
+    await expect(
+      page.getByRole("list", { name: "API keys" }).getByText(key.slice(0, 12)),
+    ).toBeVisible();
+  });
+
+  await test.step("the API answers to the key and to nothing else", async () => {
+    const me = await api.get("/api/v1/me", {
+      headers: { authorization: `Bearer ${key}` },
+    });
+
+    expect(me.status()).toBe(200);
+    expect(me.headers()["ratelimit-limit"]).toBe("600");
+    expect(await me.json()).toMatchObject({
+      key: { name: "Billing app", scope: "write" },
+      user: { email: adminEmail },
+    });
+
+    const anonymous = await api.get("/api/v1/me");
+
+    expect(anonymous.status()).toBe(401);
+    expect(await anonymous.json()).toMatchObject({
+      error: { code: "unauthorized" },
+    });
+  });
+
+  await test.step("a revoked key is refused at once", async () => {
+    await page.getByRole("button", { name: "Revoke Billing app" }).click();
+    await page.getByRole("button", { name: "Revoke", exact: true }).click();
+    await expect(
+      page.getByRole("list", { name: "API keys" }).getByText("Revoked"),
+    ).toBeVisible();
+
+    const refused = await api.get("/api/v1/me", {
+      headers: { authorization: `Bearer ${key}` },
+    });
+
+    expect(refused.status()).toBe(401);
+  });
+
+  await api.dispose();
+});
+
 test("two-step sign-in: an administrator sets it up and requires it of everyone", async ({
   browser,
   page,

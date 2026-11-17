@@ -42,6 +42,8 @@ export const systemAuditEventTypes = [
   "two_factor_requirement_changed",
   "logo_changed",
   "email_domain_changed",
+  "api_key_created",
+  "api_key_revoked",
 ] as const;
 
 export type SystemAuditEventType = (typeof systemAuditEventTypes)[number];
@@ -71,7 +73,7 @@ export type RecordSystemAuditEventInput = {
 };
 
 /** One key for the whole chain: writers take turns. */
-const SYSTEM_AUDIT_LOCK_ID = 746108325;
+export const SYSTEM_AUDIT_LOCK_ID = 746108325;
 
 type ChainedFields = Omit<SystemAuditEvent, never>;
 

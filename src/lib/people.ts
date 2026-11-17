@@ -6,6 +6,7 @@ import {
   queryOne,
   withTransaction,
 } from "./db/connection.ts";
+import { revokeApiKeysForUser } from "./api-keys.ts";
 import { recordSystemAuditEvent } from "./services/system-audit.ts";
 
 // The accounts on this install and who among them is an administrator.
@@ -282,6 +283,19 @@ export async function setPersonRole(
       `UPDATE "user" SET role = $1, "updatedAt" = now() WHERE id = $2`,
       [role, targetUserId],
     );
+
+    if (role === "user") {
+      // A key acts as its administrator. One who is no longer one loses
+      // their keys for good, so making them one again later does not
+      // quietly bring old keys back. Done before the audit event below:
+      // revokeApiKey locks a key row and then the audit chain, so this
+      // takes them in the same order and the two cannot deadlock.
+      await revokeApiKeysForUser(targetUserId, "role_removed", tx, {
+        email: actor.email,
+        userId: actingUserId,
+      });
+    }
+
     await recordSystemAuditEvent(
       {
         actorEmail: actor.email,

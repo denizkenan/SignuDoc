@@ -176,6 +176,10 @@ These cover the people with an account (senders and administrators). Signers who
 - **Wrong passwords.** Ten wrong passwords for one email address within 15 minutes stop sign-in for that address until the 15 minutes are up. This happens whether or not the address has an account, so it says nothing about which ones do. Ten wrong codes at the second step lock that step for 15 minutes in the same way.
 - **The site audit trail** (Settings, Organization, Sign-in security) records each sign-in and failed sign-in with the address it came from, lockouts, sign-outs, password changes and resets, two-step sign-in being turned on, off or reset, new backup codes, and changes to settings, roles, the logo, the email domain, identity confirmations and signing locks. The rows form one hash chain, so a changed or removed row shows, and the trail downloads as CSV.
 
+### API keys
+
+Another app can create and send envelopes through the [SignuDoc API](api.md). An administrator makes a key for it under Settings, Organization, API keys. The key is shown once and only its hash is stored. It acts as the administrator who made it, skips two-step sign-in (it is for servers, not people), and stops working when it is revoked, expires, or its administrator stops being one. Making and revoking keys is in the site audit trail.
+
 ### Send the audit trail to your SIEM
 
 Every row added to the site audit trail or to a document's audit trail is also written to the function logs, once it is saved, as one line of JSON. So are refused requests and failures worth a look. A Vercel log drain (team Settings, Drains, or an observability integration from the Vercel Marketplace such as Datadog, Axiom or Better Stack) then delivers them to your SIEM as fields it can search and alert on. Log drains are a paid Vercel feature; see Vercel's pricing page for which plans have them.

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import { FieldShell, ShellButton } from "@/components/shared/form-shell";
+import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
 import { BrandingPanel } from "@/components/settings/branding-panel";
 import { Part11Panel } from "@/components/settings/part11-panel";
 import { PeoplePanel } from "@/components/settings/people-panel";
@@ -412,6 +413,8 @@ export function OrganizationSettings({
         {!values.hosted ? (
           <Part11Panel initialEnabled={values.part11Mode} />
         ) : null}
+
+        {!values.hosted ? <ApiKeysPanel /> : null}
 
         <SignerDataPanel />
       </div>
