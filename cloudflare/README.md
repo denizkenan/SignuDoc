@@ -4,6 +4,11 @@ This folder runs [SignuDoc](https://github.com/NYLLON-SOFTWARE/SignuDoc) on Clou
 
 Cloudflare support was contributed by [Jonathan Drake (@drake)](https://github.com/drake).
 
+This checkout uses **Xata PostgreSQL** with automatic scale-to-zero and R2.
+See [the deployment decision and settings](architecture.md) for the Workers
+versus Containers comparison, Xata's one-minute minimum sleep period, and
+the five-second application connection timeout.
+
 | Part           | On Vercel       | Here                                               |
 | -------------- | --------------- | -------------------------------------------------- |
 | The app        | Vercel Function | A container, started by the Worker in `worker.mjs` |
@@ -15,7 +20,7 @@ Cloudflare support was contributed by [Jonathan Drake (@drake)](https://github.c
 
 ## What you bring
 
-One thing: a Postgres database. Cloudflare has none to create for you. [Neon](https://neon.com)'s free plan is enough. Everything else is made on your Cloudflare account by the deployment: the Worker, the container, the bucket and the connection to email.
+One thing: a Postgres database. This checkout uses [Xata](https://xata.io), with automatic scale-to-zero. Everything else is made on your Cloudflare account by the deployment: the Worker, the container, the bucket and the connection to email.
 
 You also need:
 
@@ -30,7 +35,7 @@ The quickest way is the **Deploy to Cloudflare** button in the [README](../READM
 
 To do it by hand instead:
 
-1. **Create the database.** In Neon, create a project and copy its connection string with connection pooling turned off.
+1. **Create the database.** In Xata, create a project and copy the primary PostgreSQL connection string. Enable automatic scale-to-zero with a one-minute inactivity period, the minimum supported by Xata.
 2. **Store it.** From the top of the repository, run `npx wrangler secret put DATABASE_URL` and paste the connection string.
 3. **Deploy.** Run `npx wrangler r2 bucket create signudoc-documents` once, to make the bucket. Then start Docker (or [Colima](https://github.com/abiosoft/colima)) and run `npx wrangler deploy`. The first deployment takes a few minutes.
 4. **Open the site** at the `workers.dev` address the deployment prints. It takes you to `/setup`, as in [Self-hosting](../docs/self-hosting.md#set-the-site-up). Do this straight away: a new install belongs to whoever sets it up first.

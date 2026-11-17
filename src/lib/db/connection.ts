@@ -43,7 +43,10 @@ export function getDb(): Pool {
     connectionTimeoutMillis: 10_000,
     // A Vercel function instance is suspended between requests, so idle
     // connections are released quickly there instead of being left to die.
-    idleTimeoutMillis: isOnVercel ? 5_000 : 30_000,
+    // Release idle connections promptly so Xata can scale to zero even
+    // while the Cloudflare container stays warm between requests.
+    idleTimeoutMillis:
+      isOnVercel || process.env.CLOUDFLARE_CONTAINER === "1" ? 5_000 : 30_000,
     max: process.env.NODE_ENV === "production" ? 10 : 5,
   });
 

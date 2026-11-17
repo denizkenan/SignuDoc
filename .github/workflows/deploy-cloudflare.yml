@@ -55,7 +55,9 @@ jobs:
       # The runner's own Docker builds the image. Wrangler pushes it to
       # Cloudflare's registry and rolls the container over to it.
       - if: env.HAS_TOKEN == 'true'
-        run: npx --yes wrangler@4 deploy
+        run: npm ci --no-audit --no-fund
+      - if: env.HAS_TOKEN == 'true'
+        run: npm run deploy:cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

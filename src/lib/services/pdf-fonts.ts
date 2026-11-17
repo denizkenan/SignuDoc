@@ -68,14 +68,22 @@ function loadFont(name: FontName): Promise<LoadedFont> {
   let loaded = loadedFonts.get(name);
 
   if (!loaded) {
-    loaded = fs.readFile(FONT_PATHS[name]).then((buffer) => {
-      const bytes = new Uint8Array(buffer);
+    loaded = fs
+      .readFile(
+        path.join(
+          process.cwd(),
+          "src/assets/fonts",
+          path.basename(FONT_PATHS[name]),
+        ),
+      )
+      .then((buffer) => {
+        const bytes = new Uint8Array(buffer);
 
-      return {
-        bytes,
-        characters: new Set(fontkit.create(bytes).characterSet),
-      };
-    });
+        return {
+          bytes,
+          characters: new Set(fontkit.create(bytes).characterSet),
+        };
+      });
     // A failed read is not remembered, so the next PDF tries again.
     loaded.catch(() => loadedFonts.delete(name));
     loadedFonts.set(name, loaded);

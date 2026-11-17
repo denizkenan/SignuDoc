@@ -9,6 +9,7 @@ const { version } = JSON.parse(readFileSync("./package.json", "utf8")) as {
 };
 
 const nextConfig: NextConfig = {
+  output: process.env.SIGNUDOC_STANDALONE === "1" ? "standalone" : undefined,
   env: {
     NEXT_PUBLIC_SIGNUDOC_VERSION: version,
     // Whether Vercel BotID is on, decided once at build time so the browser

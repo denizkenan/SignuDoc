@@ -144,6 +144,7 @@ export class SignuDocApp extends DurableObject {
       APP_URL: (await this.ctx.storage.get("appUrl")) ?? "",
       // Signs sessions.
       BETTER_AUTH_SECRET: await this.storedSecret("authSecret"),
+      CLOUDFLARE_CONTAINER: "1",
       // Documents and email through the gateways above. Both drivers send
       // the gateway token with every request: the email driver as its API
       // token, the storage driver as its access key id.

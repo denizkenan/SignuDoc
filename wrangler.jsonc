@@ -4,12 +4,14 @@
 // Cloudflare" button, and Cloudflare's own builds, look for it here.
 {
   "name": "signudoc",
+  "account_id": "4a45cbc45e938d773a8a6769b7bbd9c7",
   "main": "cloudflare/worker.mjs",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
   // Served at <name>.<your subdomain>.workers.dev until a domain is added.
   "workers_dev": true,
   "preview_urls": false,
+  "routes": [{ "pattern": "sign.logistica-os.com", "custom_domain": true }],
 
   // The app, built from the repository into a container image.
   "containers": [
